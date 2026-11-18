@@ -2,7 +2,7 @@
   "name": "auraconnect-fullstack",
   "version": "1.0.0",
   "description": "AuraConnect Full-Stack App with Node.js, Express, Socket.IO, SQLite SQL Database, and Admin CMS",
-  "main": "server/index.js",
+  "main": "index.js",
   "scripts": {
     "start": "node index.js",
     "dev": "nodemon index.js"

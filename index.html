@@ -26,6 +26,9 @@
     <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@600;700;800;900&family=Inter:wght@400;500;600;700&family=Playfair+Display:ital,wght@0,600;0,700;1,600&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
     <script src="https://unpkg.com/lucide@latest"></script>
     <style>
+        /* =========================================================
+           1. ORIGINAL COSMOS THEME (Sleek Glassmorphism & Neon)
+           ========================================================= */
         :root,
         [data-theme="original"] {
             --font-body: 'Plus Jakarta Sans', 'Inter', sans-serif;
@@ -58,7 +61,9 @@
             --btn-secondary-text: #ffffff;
         }
 
-        /* 2. ANCIENT RUINS THEME (3D Carved Stone & Golden Runes) */
+        /* =========================================================
+           2. ANCIENT RUINS THEME (3D Carved Stone & Golden Runes)
+           ========================================================= */
         [data-theme="ruins"] {
             --font-body: 'Plus Jakarta Sans', 'Inter', sans-serif;
             --font-display: 'Cinzel', Georgia, serif;
@@ -90,14 +95,16 @@
             --btn-secondary-text: #fef3c7;
         }
 
-        /* 3. PURE SIMPLE MINIMALISTIC THEME */
+        /* =========================================================
+           3. PURE SIMPLE MINIMALISTIC THEME (No-Distraction Variant)
+           ========================================================= */
         [data-theme="minimal"] {
             --font-body: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
             --font-display: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
             --bg-main: #f8fafc;
             --text-main: #0f172a;
             --text-muted: #64748b;
-            --surface-nav: rgba(255, 255, 255, 0.96);
+            --surface-nav: #ffffff;
             --surface-card: #ffffff;
             --surface-panel: #f1f5f9;
             --surface-modal: #ffffff;
@@ -107,18 +114,18 @@
             --accent-secondary: #334155;
             --accent-tertiary: #475569;
             --hero-bg: #ffffff;
-            --hero-title-grad: linear-gradient(90deg, #0f172a, #334155);
-            --void-bg: radial-gradient(circle at 50% 50%, #ffffff 0%, #f1f5f9 80%, #e2e8f0 100%);
+            --hero-title-grad: linear-gradient(90deg, #0f172a, #0f172a);
+            --void-bg: #f1f5f9;
             --bubble-bg: #ffffff;
             --bubble-border: #cbd5e1;
             --bubble-border-hover: #0f172a;
-            --bubble-shadow: 0 4px 14px rgba(15, 23, 42, 0.06);
-            --card-shadow: 0 1px 3px rgba(15, 23, 42, 0.05);
+            --bubble-shadow: none;
+            --card-shadow: none;
             --input-bg: #ffffff;
             --input-text: #0f172a;
             --btn-primary-bg: #0f172a;
             --btn-primary-text: #ffffff;
-            --btn-secondary-bg: #f1f5f9;
+            --btn-secondary-bg: #e2e8f0;
             --btn-secondary-text: #0f172a;
         }
 
@@ -191,7 +198,17 @@
         }
 
         /* =========================================================
-           ANCIENT RUINS 3D CARVED STONE ARCHITECTURE
+           ORIGINAL COSMOS EXCLUSIVE STYLES (Clean Modern Glass)
+           ========================================================= */
+        [data-theme="original"] .nav-btn.nav-active {
+            background: linear-gradient(135deg, rgba(168, 85, 247, 0.35), rgba(236, 72, 153, 0.3));
+            border: 1px solid rgba(192, 132, 252, 0.5);
+            color: #ffffff !important;
+        }
+        [data-theme="original"] .ruin-only { display: none !important; }
+
+        /* =========================================================
+           ANCIENT RUINS 3D CARVED STONE ARCHITECTURE (Exclusive)
            ========================================================= */
         [data-theme="ruins"] body {
             background-image:
@@ -266,24 +283,39 @@
         }
         [data-theme="ruins"] select option { background-color: #1c1912; color: #f3e8ce; }
 
-        /* PURE MINIMALISTIC OVERRIDES */
+        /* =========================================================
+           PURE MINIMALISTIC OVERRIDES (Distraction-Free Variant)
+           ========================================================= */
+        [data-theme="minimal"] .ruin-only,
+        [data-theme="minimal"] .minimal-hide { display: none !important; }
         [data-theme="minimal"] .glass-nav,
         [data-theme="minimal"] .glass-card,
         [data-theme="minimal"] .glass-panel,
         [data-theme="minimal"] .glass-modal {
-            backdrop-filter: none;
-            -webkit-backdrop-filter: none;
+            backdrop-filter: none !important;
+            -webkit-backdrop-filter: none !important;
             background: #ffffff !important;
             border: 1px solid #e2e8f0 !important;
-            box-shadow: 0 1px 3px rgba(15, 23, 42, 0.05) !important;
+            box-shadow: none !important;
+            border-radius: 14px !important;
+        }
+        [data-theme="minimal"] .hero-gradient-text {
+            background-image: none !important;
+            color: #0f172a !important;
         }
         [data-theme="minimal"] .text-white,
         [data-theme="minimal"] .text-slate-100,
-        [data-theme="minimal"] .text-slate-200 { color: #0f172a !important; }
+        [data-theme="minimal"] .text-slate-200,
+        [data-theme="minimal"] .text-amber-400,
+        [data-theme="minimal"] .text-amber-300,
+        [data-theme="minimal"] .text-amber-200 { color: #0f172a !important; }
         [data-theme="minimal"] .text-slate-300,
         [data-theme="minimal"] .text-slate-400 { color: #64748b !important; }
         [data-theme="minimal"] .bg-white\/5,
-        [data-theme="minimal"] .bg-white\/10 { background-color: #f1f5f9 !important; }
+        [data-theme="minimal"] .bg-white\/10,
+        [data-theme="minimal"] .bg-black\/35,
+        [data-theme="minimal"] .bg-black\/40,
+        [data-theme="minimal"] .bg-black\/50 { background-color: #f1f5f9 !important; }
         [data-theme="minimal"] .nav-btn.nav-active {
             background: #0f172a !important;
             color: #ffffff !important;
@@ -299,7 +331,9 @@
             background: linear-gradient(125deg, rgba(26, 23, 16, 0.98) 0%, rgba(26, 23, 16, 0.98) 46%, rgba(216, 173, 77, 0.18) 46.3%, rgba(46, 139, 102, 0.16) 100%) !important;
         }
         [data-theme="minimal"] .confession-diagonal {
-            background: linear-gradient(125deg, #ffffff 0%, #ffffff 46%, #f8fafc 46.3%, #f1f5f9 100%) !important;
+            background: #ffffff !important;
+            border: 1px solid #e2e8f0 !important;
+            box-shadow: none !important;
         }
 
         /* Name Decorations Unlocked via XP Rank */
@@ -337,6 +371,13 @@
             color: transparent !important;
             font-weight: 900;
         }
+        [data-theme="minimal"] .deco-gold,
+        [data-theme="minimal"] .deco-crimson,
+        [data-theme="minimal"] .deco-celestial,
+        [data-theme="minimal"] .deco-abyssal {
+            background: none !important;
+            color: #0f172a !important;
+        }
 
         /* 3D Tumbling Fate Polyhedron */
         .fate-cube-scene {
@@ -368,9 +409,18 @@
             align-items: center;
             justify-content: center;
             font-size: 32px;
-            background: linear-gradient(145deg, rgba(216, 173, 77, 0.25), rgba(20, 18, 12, 0.95));
+            background: radial-gradient(circle at 30% 30%, rgba(168, 85, 247, 0.3), rgba(15, 23, 42, 0.95));
             border: 2px solid var(--accent-primary);
+            box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+        }
+        [data-theme="ruins"] .fate-face {
+            background: linear-gradient(145deg, rgba(216, 173, 77, 0.25), rgba(20, 18, 12, 0.95));
             box-shadow: inset 0 0 18px rgba(216, 173, 77, 0.3), 0 8px 24px rgba(0, 0, 0, 0.6);
+        }
+        [data-theme="minimal"] .fate-face {
+            background: #f1f5f9;
+            border: 2px solid #0f172a;
+            box-shadow: none;
         }
 
         /* Infinite Void 3D Bubble Canvas */
@@ -396,6 +446,7 @@
                 radial-gradient(2px 2px at 72% 18%, rgba(46, 139, 102, 0.4), transparent);
             background-size: 280px 280px;
         }
+        [data-theme="minimal"] .void-stars { background-image: none; }
         .bubble-3d {
             position: absolute;
             top: 0;
@@ -410,7 +461,7 @@
         }
         .bubble-3d:hover { border-color: var(--bubble-border-hover); }
         [data-theme="ruins"] .bubble-3d { border-radius: 1.15rem !important; font-family: 'Cinzel', Georgia, serif; }
-        [data-theme="minimal"] .bubble-3d { backdrop-filter: none; border-radius: 1rem !important; }
+        [data-theme="minimal"] .bubble-3d { backdrop-filter: none; border-radius: 0.75rem !important; box-shadow: none !important; }
 
         /* Floating Stage Reaction Animation */
         @keyframes floatReactionUp {
@@ -446,25 +497,25 @@
     <!-- ================= STICKY TOP HEADER ================= -->
     <header class="sticky top-0 z-40 px-2 sm:px-4 pt-2.5 pb-2 w-full">
         <div class="max-w-6xl mx-auto flex flex-col gap-2">
-            <!-- Row 1: 3D Carved Navigation Tabs + Auth/Cloud & Action Cluster -->
+            <!-- Row 1: Navigation Tabs + Auth/Cloud & Action Cluster -->
             <div class="flex items-center justify-between gap-2">
                 <nav class="glass-nav px-2 sm:px-3 py-1.5 rounded-full flex items-center space-x-1.5 shadow-lg overflow-x-auto no-scrollbar max-w-full flex-1 md:flex-initial">
                     <button onclick="openAuthModal()" class="p-2 rounded-full hover:bg-white/10 transition text-amber-400 shrink-0" title="Account & Cloud Sync">
                         <i data-lucide="id-card" class="w-4 h-4"></i>
                     </button>
                     <div class="h-4 w-px bg-white/15 shrink-0"></div>
-                    <button onclick="switchTab('home')" id="nav-home" class="nav-btn nav-active px-3 py-1.5 rounded-full text-xs font-semibold transition shrink-0">Sanctum</button>
-                    <button onclick="switchTab('dice')" id="nav-dice" class="nav-btn px-3 py-1.5 rounded-full text-xs font-medium text-slate-300 transition shrink-0">Fate</button>
-                    <button onclick="switchTab('live')" id="nav-live" class="nav-btn px-3 py-1.5 rounded-full text-xs font-medium text-slate-300 transition shrink-0">Tavern</button>
-                    <button onclick="switchTab('confessions')" id="nav-confessions" class="nav-btn px-3 py-1.5 rounded-full text-xs font-medium text-slate-300 transition shrink-0">Scrolls</button>
-                    <button onclick="switchTab('profile')" id="nav-profile" class="nav-btn px-3 py-1.5 rounded-full text-xs font-medium text-slate-300 transition shrink-0">Hero</button>
-                    <button onclick="switchTab('club')" id="nav-club" class="nav-btn px-3 py-1.5 rounded-full text-xs font-medium text-slate-300 transition shrink-0">Guild</button>
-                    <button onclick="openSearchModal()" class="p-2 rounded-full text-slate-300 hover:bg-white/10 transition shrink-0" title="Search Realm">
+                    <button onclick="switchTab('home')" id="nav-home" class="nav-btn nav-active px-3 py-1.5 rounded-full text-xs font-semibold transition shrink-0">Home</button>
+                    <button onclick="switchTab('dice')" id="nav-dice" class="nav-btn px-3 py-1.5 rounded-full text-xs font-medium text-slate-300 transition shrink-0">Dice</button>
+                    <button onclick="switchTab('live')" id="nav-live" class="nav-btn px-3 py-1.5 rounded-full text-xs font-medium text-slate-300 transition shrink-0">Live</button>
+                    <button onclick="switchTab('confessions')" id="nav-confessions" class="nav-btn px-3 py-1.5 rounded-full text-xs font-medium text-slate-300 transition shrink-0">Confessions</button>
+                    <button onclick="switchTab('profile')" id="nav-profile" class="nav-btn px-3 py-1.5 rounded-full text-xs font-medium text-slate-300 transition shrink-0">Profile</button>
+                    <button onclick="switchTab('club')" id="nav-club" class="nav-btn px-3 py-1.5 rounded-full text-xs font-medium text-slate-300 transition shrink-0">Club</button>
+                    <button onclick="openSearchModal()" class="p-2 rounded-full text-slate-300 hover:bg-white/10 transition shrink-0" title="Search">
                         <i data-lucide="search" class="w-4 h-4"></i>
                     </button>
                 </nav>
 
-                <!-- Right Action Cluster: Account/Cloud Pill, MI AMOR Allies, Settings Gear -->
+                <!-- Right Action Cluster: Account/Cloud Pill, Allies, Settings Gear -->
                 <div class="flex items-center space-x-1.5 sm:space-x-2 shrink-0">
                     <button onclick="openAuthModal()" id="headerAuthBtn" class="glass-nav px-2.5 py-1.5 rounded-full flex items-center space-x-1.5 text-[11px] font-bold text-amber-300 hover:opacity-90 transition shadow-sm" title="Sign In / Cloud Save">
                         <span id="cloudSyncDot" class="w-2 h-2 rounded-full bg-emerald-400"></span>
@@ -472,7 +523,7 @@
                         <i data-lucide="user-check" class="w-3.5 h-3.5 sm:hidden"></i>
                     </button>
 
-                    <button onclick="toggleMiAmorDrawer(true)" class="glass-nav p-1 pr-2 rounded-full flex items-center space-x-1 transition shadow-sm" title="MI AMOR Allies & Chats">
+                    <button onclick="toggleMiAmorDrawer(true)" class="glass-nav p-1 pr-2 rounded-full flex items-center space-x-1 transition shadow-sm minimal-hide" title="MI AMOR Allies & Chats">
                         <div class="flex items-center -space-x-2">
                             <img src="https://placehold.co/32x32/6366f1/ffffff?text=1" class="w-6 h-6 sm:w-7 sm:h-7 rounded-full border-2 border-slate-900 object-cover" alt="Ally 1">
                             <img src="https://placehold.co/32x32/a855f7/ffffff?text=2" class="w-6 h-6 sm:w-7 sm:h-7 rounded-full border-2 border-slate-900 object-cover hidden sm:block" alt="Ally 2">
@@ -486,8 +537,8 @@
                 </div>
             </div>
 
-            <!-- Row 2: Live Anti-Idle XP, Rank & Streak Status Bar -->
-            <div class="glass-nav px-3 py-1.5 rounded-2xl flex items-center justify-between gap-3 text-[11px]">
+            <!-- Row 2: Live Anti-Idle XP, Rank & Streak Status Bar (Hidden in Minimalist Mode for zero distraction) -->
+            <div class="glass-nav px-3 py-1.5 rounded-2xl flex items-center justify-between gap-3 text-[11px] minimal-hide">
                 <div class="flex items-center space-x-2 min-w-0">
                     <span id="hudRankBadge" class="px-2 py-0.5 rounded-md bg-amber-500/20 border border-amber-500/40 text-amber-400 font-bold tracking-wide shrink-0">
                         LV.1 INITIATE
@@ -521,11 +572,11 @@
     <!-- ================= MAIN CONTENT CONTAINER ================= -->
     <main class="flex-1 relative z-10 max-w-6xl mx-auto w-full px-3 sm:px-6 pt-4 sm:pt-6 pb-8 flex flex-col">
 
-        <!-- ================= PAGE 1: SANCTUM (HOME) ================= -->
+        <!-- ================= PAGE 1: HOME / SANCTUM ================= -->
         <div id="tab-home" class="page-section space-y-6 sm:space-y-8">
-            <!-- Hero Altar Stele -->
             <section class="hero-surface ruin-corner rounded-3xl relative overflow-hidden p-6 sm:p-10 text-center space-y-5">
-                <div class="flex items-center justify-center space-x-3 text-amber-400/80 text-xs sm:text-sm tracking-[0.35em] font-bold">
+                <!-- Ancient Ruins Exclusive Header Ornament -->
+                <div class="ruin-only flex items-center justify-center space-x-3 text-amber-400/80 text-xs sm:text-sm tracking-[0.35em] font-bold">
                     <span>𓂀</span>
                     <span>✦</span>
                     <span class="px-3 py-1 rounded-full border border-amber-500/30 bg-amber-500/10 text-[10px] tracking-[0.2em] uppercase">Sanctuary of Unspoken Truths</span>
@@ -538,13 +589,13 @@
                 </h1>
 
                 <p class="text-slate-300 text-xs sm:text-base max-w-xl mx-auto leading-relaxed">
-                    Inscribe your hidden burdens onto eternal stone scrolls, cast the Fate Dice for kindred allies, and earn mythic rank through active deeds.
+                    Share your thoughts freely without judgment, match with kindred souls, and connect in a safe, supportive space.
                 </p>
 
                 <div class="flex flex-col sm:flex-row items-stretch sm:items-center justify-center gap-3 sm:gap-4 pt-2 max-w-xl mx-auto">
                     <button onclick="openConfessModal()" class="theme-btn-primary px-6 py-3.5 rounded-2xl font-bold text-xs sm:text-sm transition flex items-center justify-center space-x-2 active:translate-y-0.5">
                         <i data-lucide="scroll-text" class="w-4 h-4"></i>
-                        <span>Inscribe Anonymously</span>
+                        <span>Write Anonymously</span>
                     </button>
                     <button onclick="openAuthModal()" class="theme-btn-secondary px-6 py-3.5 rounded-2xl font-bold text-xs sm:text-sm transition flex items-center justify-center space-x-2 active:translate-y-0.5">
                         <i data-lucide="shield-check" class="w-4 h-4"></i>
@@ -552,59 +603,58 @@
                     </button>
                 </div>
 
-                <!-- Live Realm Portals -->
-                <div class="grid grid-cols-3 gap-2 sm:gap-4 max-w-2xl mx-auto pt-4 border-t border-white/10 text-left">
+                <!-- Live Portals (Hidden in Minimalist mode for clean simplicity) -->
+                <div class="grid grid-cols-3 gap-2 sm:gap-4 max-w-2xl mx-auto pt-4 border-t border-white/10 text-left minimal-hide">
                     <button onclick="switchTab('confessions')" class="glass-panel p-3 rounded-2xl hover:border-amber-400/50 transition group">
-                        <span class="text-[10px] uppercase tracking-wider text-slate-400 block">Eternal Scrolls</span>
+                        <span class="text-[10px] uppercase tracking-wider text-slate-400 block">Confessions</span>
                         <span id="heroScrollCount" class="display-heading text-base sm:text-lg font-bold text-amber-400 group-hover:translate-x-0.5 inline-block transition">142</span>
-                        <span class="text-[10px] text-slate-400 block">Enter 3D Void →</span>
+                        <span class="text-[10px] text-slate-400 block">Explore Void →</span>
                     </button>
                     <button onclick="switchTab('live')" class="glass-panel p-3 rounded-2xl hover:border-emerald-400/50 transition group">
-                        <span class="text-[10px] uppercase tracking-wider text-slate-400 block">Tavern Stage</span>
+                        <span class="text-[10px] uppercase tracking-wider text-slate-400 block">Live Stage</span>
                         <span class="display-heading text-base sm:text-lg font-bold text-emerald-400">LIVE FM</span>
                         <span class="text-[10px] text-slate-400 block">Visualizer & DJ →</span>
                     </button>
                     <button onclick="switchTab('club')" class="glass-panel p-3 rounded-2xl hover:border-amber-400/50 transition group">
-                        <span class="text-[10px] uppercase tracking-wider text-slate-400 block">Guild Raid</span>
+                        <span class="text-[10px] uppercase tracking-wider text-slate-400 block">Club Arena</span>
                         <span id="heroGuildBossHp" class="display-heading text-base sm:text-lg font-bold text-rose-400">78% HP</span>
                         <span class="text-[10px] text-slate-400 block">3 Mini-Games →</span>
                     </button>
                 </div>
             </section>
 
-            <!-- Daily Realm Quests Panel (Interactive XP Checklist) -->
-            <section class="glass-card ruin-corner p-5 rounded-3xl max-w-4xl mx-auto space-y-3">
+            <!-- Daily Quests Panel (Hidden in Minimalist mode) -->
+            <section class="glass-card ruin-corner p-5 rounded-3xl max-w-4xl mx-auto space-y-3 minimal-hide">
                 <div class="flex items-center justify-between">
                     <div>
-                        <h2 class="display-heading text-sm sm:text-base font-bold text-amber-400">Daily Adventurer Quests</h2>
-                        <p class="text-[11px] text-slate-400">Complete active tasks across the realm to claim bonus XP</p>
+                        <h2 class="display-heading text-sm sm:text-base font-bold text-amber-400">Daily Activity Quests</h2>
+                        <p class="text-[11px] text-slate-400">Complete active tasks across the app to claim bonus XP</p>
                     </div>
                     <span id="questProgressLabel" class="px-3 py-1 rounded-full bg-amber-500/15 text-amber-300 font-mono text-xs font-bold">0 / 4 Done</span>
                 </div>
                 <div id="dailyQuestGrid" class="grid grid-cols-1 sm:grid-cols-2 gap-2.5"></div>
             </section>
 
-            <!-- Recent Inscribed Confessions Feed -->
+            <!-- Recent Confessions Feed -->
             <div class="space-y-3 max-w-4xl mx-auto">
                 <div class="flex items-center justify-between px-1">
-                    <h2 class="display-heading text-sm sm:text-base font-bold uppercase tracking-wider text-amber-400/90">Recent Sacred Scrolls</h2>
-                    <button onclick="switchTab('confessions')" class="text-xs text-slate-400 hover:text-white transition">Explore Infinite Void →</button>
+                    <h2 class="display-heading text-sm sm:text-base font-bold uppercase tracking-wider text-amber-400/90">Recent Confessions</h2>
+                    <button onclick="switchTab('confessions')" class="text-xs text-slate-400 hover:text-white transition">View All →</button>
                 </div>
 
                 <div id="homeConfessionGrid" class="grid grid-cols-1 md:grid-cols-2 gap-4 sm:gap-6"></div>
             </div>
         </div>
 
-        <!-- ================= PAGE 2: FATE (3D TUMBLING DICE, FILTERS & REAL 1-ON-1 CHAT) ================= -->
+        <!-- ================= PAGE 2: DICE / FATE (3D TUMBLING DICE, FILTERS & REAL 1-ON-1 CHAT) ================= -->
         <div id="tab-dice" class="page-section hidden space-y-6">
             <div class="grid grid-cols-1 lg:grid-cols-3 gap-5 max-w-5xl mx-auto">
                 <!-- Left 2 Cols: 3D Fate Dice Altar & Match Card -->
                 <div class="lg:col-span-2 glass-card ruin-corner p-5 sm:p-8 rounded-3xl text-center relative overflow-hidden shadow-2xl flex flex-col justify-between min-h-[440px]">
-                    <!-- Vibe / Interest Affinity Filter Pills -->
                     <div class="space-y-2 z-10">
-                        <span class="text-[10px] font-bold uppercase tracking-widest text-amber-400 block">Select Soul Resonance Filter</span>
+                        <span class="text-[10px] font-bold uppercase tracking-widest text-amber-400 block">Select Interest Filter</span>
                         <div id="fateFilterRow" class="flex flex-wrap items-center justify-center gap-1.5">
-                            <button type="button" onclick="setFateFilter('All')" data-fate-filter="All" class="fate-filter-btn px-3 py-1 rounded-full text-[11px] font-bold bg-amber-500/25 border border-amber-400/60 text-amber-200 transition">All Realms</button>
+                            <button type="button" onclick="setFateFilter('All')" data-fate-filter="All" class="fate-filter-btn px-3 py-1 rounded-full text-[11px] font-bold bg-amber-500/25 border border-amber-400/60 text-amber-200 transition">All Interests</button>
                             <button type="button" onclick="setFateFilter('Anime & Art')" data-fate-filter="Anime & Art" class="fate-filter-btn px-3 py-1 rounded-full text-[11px] font-semibold bg-white/5 border border-white/10 text-slate-300 transition">Anime & Art</button>
                             <button type="button" onclick="setFateFilter('Gaming & Raids')" data-fate-filter="Gaming & Raids" class="fate-filter-btn px-3 py-1 rounded-full text-[11px] font-semibold bg-white/5 border border-white/10 text-slate-300 transition">Gaming & Raids</button>
                             <button type="button" onclick="setFateFilter('Music & Lofi')" data-fate-filter="Music & Lofi" class="fate-filter-btn px-3 py-1 rounded-full text-[11px] font-semibold bg-white/5 border border-white/10 text-slate-300 transition">Music & Lofi</button>
@@ -612,24 +662,20 @@
                         </div>
                     </div>
 
-                    <!-- Center Stage: 3D Polyhedron + Match Result -->
                     <div class="my-auto py-6 px-2 space-y-5 relative z-10">
-                        <!-- 3D Tumbling Die -->
                         <div class="fate-cube-scene">
                             <div id="fateCube" class="fate-cube">
                                 <div class="fate-face" id="fateCubeGlyph">🎲</div>
                             </div>
                         </div>
 
-                        <!-- Initial / Rolling Prompt -->
                         <div id="diceWaitingBox" class="glass-panel p-5 rounded-3xl max-w-md mx-auto space-y-2">
                             <h2 class="display-heading hero-gradient-text text-lg sm:text-xl font-bold">
-                                Cast the Fate Polyhedron to Summon an Ally
+                                Roll the Dice to Match with Someone New
                             </h2>
-                            <p class="text-xs text-slate-400">Matches calculate aura compatibility & unlock instant 1-on-1 encrypted whispers.</p>
+                            <p class="text-xs text-slate-400">Matches calculate compatibility & unlock instant 1-on-1 chat.</p>
                         </div>
 
-                        <!-- Discovered Soul Match Card -->
                         <div id="diceResultCard" class="hidden glass-modal p-5 rounded-3xl max-w-md mx-auto text-left space-y-3.5 shadow-2xl border border-amber-400/40">
                             <div class="flex items-center justify-between gap-2">
                                 <div class="flex items-center space-x-3">
@@ -643,7 +689,7 @@
                                     </div>
                                 </div>
                                 <div class="text-right">
-                                    <span id="matchCompatBadge" class="px-2.5 py-1 rounded-full bg-emerald-500/20 border border-emerald-400/40 text-emerald-300 text-[11px] font-extrabold block">96% Resonance</span>
+                                    <span id="matchCompatBadge" class="px-2.5 py-1 rounded-full bg-emerald-500/20 border border-emerald-400/40 text-emerald-300 text-[11px] font-extrabold block">96% Match</span>
                                     <span id="matchRankTag" class="text-[10px] text-slate-400 font-mono">LV.4 RUNEBLADE</span>
                                 </div>
                             </div>
@@ -656,50 +702,45 @@
                         </div>
                     </div>
 
-                    <!-- Bottom Action Row -->
                     <div class="flex flex-wrap items-center justify-center gap-3 pt-2 relative z-10">
                         <button id="diceBookmarkBtn" onclick="bookmarkCurrentMatch()" class="hidden px-4 py-2.5 rounded-2xl glass-panel font-bold text-xs shadow-lg hover:border-amber-400/50 transition flex items-center space-x-1.5">
                             <i data-lucide="bookmark" class="w-3.5 h-3.5 text-amber-400"></i>
-                            <span>Save Soul</span>
+                            <span>Save Match</span>
                         </button>
                         <button id="diceChatBtn" onclick="openFateChatWithCurrent()" class="hidden theme-btn-primary px-6 py-2.5 rounded-2xl font-bold text-xs sm:text-sm shadow-lg transition flex items-center space-x-1.5">
                             <i data-lucide="message-circle" class="w-4 h-4"></i>
-                            <span>OPEN WHISPER CHAT</span>
+                            <span>OPEN CHAT</span>
                         </button>
                         <button onclick="rollDiceMatch()" id="rollBtn" class="theme-btn-secondary px-7 py-2.5 rounded-2xl font-bold text-xs sm:text-sm shadow-xl transition active:scale-95">
-                            CAST FATE (+10 XP)
+                            ROLL DICE (+10 XP)
                         </button>
                     </div>
                 </div>
 
-                <!-- Right Col: Interactive 1-on-1 Fate Whisper Chat & Saved Matches -->
+                <!-- Right Col: Interactive 1-on-1 Direct Chat & Saved Matches -->
                 <div class="glass-card ruin-corner p-4 rounded-3xl flex flex-col justify-between min-h-[440px]">
                     <div class="space-y-3">
                         <div class="flex items-center justify-between pb-2.5 border-b border-white/10">
                             <div class="flex items-center space-x-2">
                                 <span id="activePeerDot" class="w-2.5 h-2.5 rounded-full bg-emerald-400"></span>
-                                <h3 id="fateChatHeaderTitle" class="display-heading font-bold text-sm">Whisper: Clara</h3>
+                                <h3 id="fateChatHeaderTitle" class="display-heading font-bold text-sm">Chat: Clara</h3>
                             </div>
-                            <span class="text-[10px] px-2 py-0.5 rounded-full bg-amber-500/15 text-amber-300 font-bold">Saved Bonds</span>
+                            <span class="text-[10px] px-2 py-0.5 rounded-full bg-amber-500/15 text-amber-300 font-bold">Saved</span>
                         </div>
 
-                        <!-- Saved Matches Switcher Strip -->
                         <div id="savedMatchesStrip" class="flex items-center gap-1.5 overflow-x-auto no-scrollbar pb-1"></div>
-
-                        <!-- Direct Message Thread -->
                         <div id="fateChatMessages" class="space-y-2.5 overflow-y-auto h-[235px] pr-1 text-xs"></div>
                     </div>
 
                     <div class="pt-2.5 border-t border-white/10 space-y-2">
-                        <!-- One-Tap Icebreaker Prompts -->
-                        <div class="flex items-center gap-1.5 overflow-x-auto no-scrollbar">
+                        <div class="flex items-center gap-1.5 overflow-x-auto no-scrollbar minimal-hide">
                             <button type="button" onclick="sendIcebreaker('What manhwa or anime world would you live in?')" class="px-2.5 py-1 rounded-full bg-white/5 hover:bg-white/15 text-[10px] text-slate-300 shrink-0 transition">✨ Favorite world?</button>
-                            <button type="button" onclick="sendIcebreaker('Want to team up for the Slash & Burn guild raid?')" class="px-2.5 py-1 rounded-full bg-white/5 hover:bg-white/15 text-[10px] text-slate-300 shrink-0 transition">⚔️ Guild raid?</button>
-                            <button type="button" onclick="sendIcebreaker('Sending good aura your way today!')" class="px-2.5 py-1 rounded-full bg-white/5 hover:bg-white/15 text-[10px] text-slate-300 shrink-0 transition">🔮 Send aura</button>
+                            <button type="button" onclick="sendIcebreaker('Want to team up for the Slash & Burn raid?')" class="px-2.5 py-1 rounded-full bg-white/5 hover:bg-white/15 text-[10px] text-slate-300 shrink-0 transition">⚔️ Club raid?</button>
+                            <button type="button" onclick="sendIcebreaker('Sending good vibes your way today!')" class="px-2.5 py-1 rounded-full bg-white/5 hover:bg-white/15 text-[10px] text-slate-300 shrink-0 transition">🔮 Send vibes</button>
                         </div>
 
                         <form onsubmit="event.preventDefault(); sendFateDirectMessage();" class="flex items-center bg-white/10 rounded-full px-3.5 py-2 border border-white/10">
-                            <input type="text" id="fateChatInput" placeholder="Whisper to matched soul..." class="w-full bg-transparent text-xs placeholder-slate-400 focus:outline-none">
+                            <input type="text" id="fateChatInput" placeholder="Send a message..." class="w-full bg-transparent text-xs placeholder-slate-400 focus:outline-none">
                             <button type="submit" class="text-amber-400 hover:opacity-80 ml-2 p-1">
                                 <i data-lucide="send" class="w-4 h-4"></i>
                             </button>
@@ -709,27 +750,23 @@
             </div>
         </div>
 
-        <!-- ================= PAGE 3: TAVERN (LIVE BROADCAST, SPECTRUM VISUALIZER, DJ BOOTH, POLLS & CHAT) ================= -->
+        <!-- ================= PAGE 3: LIVE / TAVERN (BROADCAST, VISUALIZER, DJ BOOTH, POLLS & CHAT) ================= -->
         <div id="tab-live" class="page-section hidden space-y-5">
             <div class="grid grid-cols-1 lg:grid-cols-3 gap-5">
-                <!-- Left 2 Cols: Multi-Mode Live Stage + DJ Soundboard + Audio Console -->
                 <div class="lg:col-span-2 space-y-4">
                     <div class="glass-card ruin-corner p-4 sm:p-5 rounded-3xl overflow-hidden shadow-2xl space-y-4">
-                        <!-- Broadcast Mode Switcher Tabs -->
                         <div class="flex flex-wrap items-center justify-between gap-2 pb-2 border-b border-white/10">
                             <div class="flex items-center gap-1.5 overflow-x-auto no-scrollbar">
-                                <button onclick="setTavernMode('synth')" id="tavernMode-synth" class="tavern-mode-btn px-3 py-1.5 rounded-xl bg-amber-500/25 border border-amber-400/50 text-amber-200 text-[11px] font-bold shrink-0 transition">🎹 Tavern Synth & Visualizer</button>
+                                <button onclick="setTavernMode('synth')" id="tavernMode-synth" class="tavern-mode-btn px-3 py-1.5 rounded-xl bg-amber-500/25 border border-amber-400/50 text-amber-200 text-[11px] font-bold shrink-0 transition">🎹 Lofi Synth & Visualizer</button>
                                 <button onclick="setTavernMode('radio')" id="tavernMode-radio" class="tavern-mode-btn px-3 py-1.5 rounded-xl bg-white/5 border border-white/10 text-slate-300 text-[11px] font-semibold shrink-0 transition">📻 Global Live Radio</button>
                                 <button onclick="setTavernMode('cinema')" id="tavernMode-cinema" class="tavern-mode-btn px-3 py-1.5 rounded-xl bg-white/5 border border-white/10 text-slate-300 text-[11px] font-semibold shrink-0 transition">🎬 Watch-Together Stage</button>
                             </div>
                             <span id="streamListenersBadge" class="px-2.5 py-1 rounded-full bg-emerald-500/15 text-emerald-300 text-[10px] font-bold">
-                                ● 1,428 in Tavern
+                                ● 1,428 Online
                             </span>
                         </div>
 
-                        <!-- LIVE STAGE VIEWPORT (Floating Emoji Reactions Layer) -->
                         <div id="tavernStageContainer" class="relative rounded-2xl overflow-hidden border border-amber-500/30 bg-gradient-to-br from-stone-950 via-stone-900 to-amber-950/40 p-4 sm:p-5 min-h-[250px] flex flex-col justify-between">
-                            <!-- Mode A & B: Live Spectrum Canvas + Audio Player -->
                             <div id="tavernAudioStage" class="space-y-4 z-10">
                                 <div class="flex flex-col sm:flex-row items-center justify-between gap-4">
                                     <div class="flex items-center space-x-3.5 w-full sm:w-auto">
@@ -738,26 +775,21 @@
                                         </button>
                                         <div class="min-w-0">
                                             <span id="stationGenreTag" class="text-[10px] uppercase tracking-widest text-amber-400 font-bold block">GENERATIVE LOFI SYNTH • ZERO LATENCY</span>
-                                            <h3 id="stationTitle" class="display-heading text-base sm:text-xl font-bold text-white truncate">Ancient Tavern Hearth & Rain Synth</h3>
+                                            <h3 id="stationTitle" class="display-heading text-base sm:text-xl font-bold text-white truncate">Ambient Hearth & Rain Synth</h3>
                                             <p id="stationSubtitle" class="text-xs text-slate-300 truncate">Press Play for real-time Web Audio chords, rain ambience & frequency spectrum</p>
                                         </div>
                                     </div>
 
-                                    <!-- Rain / Fireplace Ambience Toggle -->
                                     <button onclick="toggleTavernRain()" id="rainToggleBtn" class="px-3.5 py-2 rounded-xl bg-white/10 hover:bg-white/15 border border-white/15 text-xs font-semibold text-cyan-300 shrink-0 transition flex items-center space-x-1.5">
                                         <i data-lucide="cloud-rain" class="w-4 h-4"></i>
                                         <span id="rainToggleLabel">Rain: OFF</span>
                                     </button>
                                 </div>
 
-                                <!-- Real-Time HTML5 Canvas Frequency Spectrum Visualizer -->
                                 <canvas id="tavernSpectrumCanvas" class="w-full h-24 rounded-xl bg-black/45 border border-white/10 block"></canvas>
-
-                                <!-- Radio Station Selector Row (Shown in Radio Mode or Quick Switch) -->
                                 <div id="stationPillsRow" class="flex items-center gap-2 overflow-x-auto no-scrollbar"></div>
                             </div>
 
-                            <!-- Mode C: Watch-Together Cinema Stage (Curated Reliable Embeds + Custom URL Loader) -->
                             <div id="tavernCinemaStage" class="hidden space-y-3 z-10">
                                 <div class="aspect-video w-full rounded-xl overflow-hidden bg-black border border-white/10">
                                     <iframe id="cinemaIframe" class="w-full h-full border-0" src="https://archive.org/embed/BigBuckBunny_328" title="Watch Together Cinema" allowfullscreen></iframe>
@@ -772,9 +804,8 @@
                                 </div>
                             </div>
 
-                            <!-- Stage Floating Reaction Bar -->
-                            <div class="flex items-center justify-between pt-3 mt-2 border-t border-white/10 z-10">
-                                <span class="text-[10px] text-slate-400 font-semibold uppercase tracking-wider">Send Stage Aura:</span>
+                            <div class="flex items-center justify-between pt-3 mt-2 border-t border-white/10 z-10 minimal-hide">
+                                <span class="text-[10px] text-slate-400 font-semibold uppercase tracking-wider">Send Reaction:</span>
                                 <div class="flex items-center space-x-1.5">
                                     <button onclick="triggerStageReaction('🔥')" class="px-2.5 py-1 rounded-full bg-white/10 hover:bg-white/20 text-sm transition active:scale-90">🔥</button>
                                     <button onclick="triggerStageReaction('⚔️')" class="px-2.5 py-1 rounded-full bg-white/10 hover:bg-white/20 text-sm transition active:scale-90">⚔️</button>
@@ -785,20 +816,18 @@
                             </div>
                         </div>
 
-                        <!-- Interactive DJ Soundboard & Audio Equalizer Console -->
-                        <div class="glass-panel p-3.5 sm:p-4 rounded-2xl space-y-3.5">
-                            <!-- DJ Sound Effect Pads -->
+                        <!-- Interactive DJ Soundboard & Audio Equalizer Console (Hidden in Minimalist mode) -->
+                        <div class="glass-panel p-3.5 sm:p-4 rounded-2xl space-y-3.5 minimal-hide">
                             <div class="flex items-center justify-between gap-2 overflow-x-auto no-scrollbar">
                                 <span class="text-[10px] font-bold uppercase tracking-wider text-amber-400 shrink-0">DJ Soundboard:</span>
                                 <div class="flex items-center gap-1.5">
-                                    <button onclick="playDjPad('bell')" class="px-2.5 py-1.5 rounded-xl bg-amber-500/15 hover:bg-amber-500/25 border border-amber-500/35 text-[10px] font-bold text-amber-300 shrink-0 transition">🔔 Tavern Bell</button>
-                                    <button onclick="playDjPad('chime')" class="px-2.5 py-1.5 rounded-xl bg-emerald-500/15 hover:bg-emerald-500/25 border border-emerald-500/35 text-[10px] font-bold text-emerald-300 shrink-0 transition">✨ Mystic Chime</button>
-                                    <button onclick="playDjPad('drum')" class="px-2.5 py-1.5 rounded-xl bg-rose-500/15 hover:bg-rose-500/25 border border-rose-500/35 text-[10px] font-bold text-rose-300 shrink-0 transition">🥁 War Drum</button>
+                                    <button onclick="playDjPad('bell')" class="px-2.5 py-1.5 rounded-xl bg-amber-500/15 hover:bg-amber-500/25 border border-amber-500/35 text-[10px] font-bold text-amber-300 shrink-0 transition">🔔 Bell</button>
+                                    <button onclick="playDjPad('chime')" class="px-2.5 py-1.5 rounded-xl bg-emerald-500/15 hover:bg-emerald-500/25 border border-emerald-500/35 text-[10px] font-bold text-emerald-300 shrink-0 transition">✨ Chime</button>
+                                    <button onclick="playDjPad('drum')" class="px-2.5 py-1.5 rounded-xl bg-rose-500/15 hover:bg-rose-500/25 border border-rose-500/35 text-[10px] font-bold text-rose-300 shrink-0 transition">🥁 Drum</button>
                                     <button onclick="playDjPad('drop')" class="px-2.5 py-1.5 rounded-xl bg-purple-500/15 hover:bg-purple-500/25 border border-purple-500/35 text-[10px] font-bold text-purple-300 shrink-0 transition">⚡ Bass Drop</button>
                                 </div>
                             </div>
 
-                            <!-- Volume, 4 DSP Switches & Bass -->
                             <div class="flex flex-col sm:flex-row items-center justify-between gap-4 pt-2 border-t border-white/10">
                                 <div class="flex items-center space-x-3 w-full sm:w-auto justify-between sm:justify-start">
                                     <div class="w-10 h-10 rounded-xl bg-amber-500/15 border border-amber-500/40 flex items-center justify-center text-[10px] font-bold text-amber-300 shrink-0" id="volLabel">75%</div>
@@ -825,7 +854,6 @@
                             </div>
                         </div>
 
-                        <!-- Bottom 4 Tavern Action Medallions -->
                         <div class="grid grid-cols-4 gap-2.5 pt-1">
                             <button onclick="toggleVoiceRoomCall()" id="voiceCallBtn" class="glass-panel flex flex-col items-center justify-center py-2.5 rounded-2xl hover:border-amber-400/50 active:scale-95 transition">
                                 <div class="w-9 h-9 rounded-xl bg-amber-500/15 border border-amber-500/35 text-amber-400 flex items-center justify-center mb-1"><i data-lucide="mic" class="w-4 h-4"></i></div>
@@ -833,7 +861,7 @@
                             </button>
                             <button onclick="switchTab('dice')" class="glass-panel flex flex-col items-center justify-center py-2.5 rounded-2xl hover:border-emerald-400/50 active:scale-95 transition">
                                 <div class="w-9 h-9 rounded-xl bg-emerald-500/15 border border-emerald-500/35 text-emerald-400 flex items-center justify-center mb-1"><i data-lucide="message-square" class="w-4 h-4"></i></div>
-                                <span class="text-[11px] font-bold">Whispers</span>
+                                <span class="text-[11px] font-bold">Messages</span>
                             </button>
                             <button onclick="copyInviteLink()" class="glass-panel flex flex-col items-center justify-center py-2.5 rounded-2xl hover:border-amber-400/50 active:scale-95 transition">
                                 <div class="w-9 h-9 rounded-xl bg-amber-500/15 border border-amber-500/35 text-amber-300 flex items-center justify-center mb-1"><i data-lucide="mail-plus" class="w-4 h-4"></i></div>
@@ -847,32 +875,30 @@
                     </div>
                 </div>
 
-                <!-- Right Col: Live Tavern Poll + Real-Time Chat -->
+                <!-- Right Col: Live Poll + Real-Time Chat -->
                 <div class="glass-card ruin-corner p-4 rounded-3xl flex flex-col justify-between space-y-3">
-                    <!-- Interactive Live Tavern Poll -->
-                    <div class="glass-panel p-3 rounded-2xl space-y-2">
+                    <div class="glass-panel p-3 rounded-2xl space-y-2 minimal-hide">
                         <div class="flex items-center justify-between">
-                            <span class="text-[10px] font-bold uppercase tracking-wider text-amber-400">📊 Live Tavern Poll</span>
+                            <span class="text-[10px] font-bold uppercase tracking-wider text-amber-400">📊 Live Poll</span>
                             <span id="pollTotalVotes" class="text-[10px] text-slate-400 font-mono">48 votes</span>
                         </div>
-                        <p class="text-xs font-bold">Next Guild Raid Soundtrack?</p>
+                        <p class="text-xs font-bold">Next Room Soundtrack?</p>
                         <div id="tavernPollOptions" class="space-y-1.5"></div>
                     </div>
 
-                    <!-- Chat Feed -->
                     <div class="flex-1 flex flex-col justify-between min-h-[250px]">
                         <div>
                             <div class="flex items-center justify-between pb-2 border-b border-white/10 mb-2.5">
-                                <h3 class="display-heading font-bold text-sm">Tavern Chat</h3>
-                                <span class="text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-400 font-bold">● CLOUD SYNCED</span>
+                                <h3 class="display-heading font-bold text-sm">Live Chat</h3>
+                                <span class="text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-400 font-bold">● LIVE</span>
                             </div>
                             <div id="liveCommentsList" class="space-y-2 overflow-y-auto max-h-[210px] pr-1 text-xs"></div>
                         </div>
 
                         <div class="pt-2.5 border-t border-white/10 space-y-2">
-                            <div id="chatStickerQuickBar" class="flex items-center gap-1.5 overflow-x-auto no-scrollbar"></div>
+                            <div id="chatStickerQuickBar" class="flex items-center gap-1.5 overflow-x-auto no-scrollbar minimal-hide"></div>
                             <div class="flex items-center bg-white/10 rounded-full px-3.5 py-2 border border-white/10">
-                                <input type="text" id="streamChatInput" onkeydown="if(event.key==='Enter'){event.preventDefault();sendStreamComment();}" placeholder="Speak in tavern (+5 XP)..." class="w-full bg-transparent text-xs placeholder-slate-400 focus:outline-none">
+                                <input type="text" id="streamChatInput" onkeydown="if(event.key==='Enter'){event.preventDefault();sendStreamComment();}" placeholder="Say something (+5 XP)..." class="w-full bg-transparent text-xs placeholder-slate-400 focus:outline-none">
                                 <button onclick="sendStreamComment()" class="text-amber-400 hover:opacity-80 ml-2 p-1">
                                     <i data-lucide="send" class="w-4 h-4"></i>
                                 </button>
@@ -883,17 +909,17 @@
             </div>
         </div>
 
-        <!-- ================= PAGE 4: SCROLLS (3D INFINITE VOID CONFESSIONS) ================= -->
+        <!-- ================= PAGE 4: CONFESSIONS / SCROLLS (3D INFINITE VOID) ================= -->
         <div id="tab-confessions" class="page-section hidden flex-1 flex flex-col max-w-5xl mx-auto w-full space-y-3">
             <div class="flex items-center justify-between px-1 shrink-0">
                 <div class="flex items-center space-x-3">
-                    <h2 class="display-heading text-2xl sm:text-3xl font-bold tracking-tight">Sacred Scrolls Void</h2>
-                    <span id="voidPoolBadge" class="hidden sm:inline-flex items-center px-2.5 py-0.5 rounded-full text-[10px] font-semibold bg-amber-500/15 text-amber-300 border border-amber-500/30">
+                    <h2 class="display-heading text-2xl sm:text-3xl font-bold tracking-tight">Anonymous Confessions</h2>
+                    <span id="voidPoolBadge" class="hidden sm:inline-flex items-center px-2.5 py-0.5 rounded-full text-[10px] font-semibold bg-amber-500/15 text-amber-300 border border-amber-500/30 minimal-hide">
                         3D Void • 0 Active Nodes
                     </span>
                 </div>
                 <div class="flex items-center space-x-2">
-                    <button onclick="resetVoidCenter(true)" class="p-2.5 rounded-full glass-card text-slate-300 hover:text-white transition" title="Recenter & Refresh Void">
+                    <button onclick="resetVoidCenter(true)" class="p-2.5 rounded-full glass-card text-slate-300 hover:text-white transition" title="Recenter">
                         <i data-lucide="compass" class="w-4 h-4"></i>
                     </button>
                     <button onclick="cycleVoidFilter()" class="p-2.5 rounded-full glass-card text-slate-300 hover:text-white transition" title="Filter Mood">
@@ -908,7 +934,7 @@
             <div id="infiniteVoidViewport" class="void-canvas relative flex-1 min-h-[56vh] sm:min-h-[60vh] w-full rounded-3xl overflow-hidden shadow-2xl">
                 <div id="voidStarLayer" class="void-stars absolute inset-0 pointer-events-none opacity-80"></div>
                 <div class="glass-panel absolute top-3 left-1/2 -translate-x-1/2 z-20 pointer-events-none px-3 py-1 rounded-full text-[10px] sm:text-[11px] text-slate-300 whitespace-nowrap">
-                    Drag or scroll the void • Tap any 3D scroll to read & reply (+5 XP)
+                    Drag or scroll to explore • Tap any note to read & reply (+5 XP)
                 </div>
                 <div id="voidBubblePool" class="absolute inset-0 overflow-hidden"></div>
                 <div class="absolute bottom-3 left-3 right-3 z-20 flex items-center justify-between pointer-events-none">
@@ -916,7 +942,7 @@
                         Sector (0, 0)
                     </span>
                     <button onclick="resetVoidCenter(true)" class="glass-panel pointer-events-auto px-3 py-1 rounded-full text-[10px] font-semibold transition hover:opacity-90">
-                        Summon New Scrolls
+                        Refresh Feed
                     </button>
                 </div>
             </div>
@@ -931,22 +957,21 @@
             </div>
         </div>
 
-        <!-- ================= PAGE 5: HERO (PROFILE, CLOUD ACCOUNT, XP RANKS & UNLOCKABLES) ================= -->
+        <!-- ================= PAGE 5: PROFILE / HERO ================= -->
         <div id="tab-profile" class="page-section hidden space-y-6 max-w-3xl mx-auto">
             <div class="glass-card ruin-corner p-5 sm:p-8 rounded-3xl shadow-2xl space-y-6">
-                <!-- Hero Identity & Cloud Account Card -->
                 <div class="glass-panel p-4 sm:p-5 rounded-2xl flex flex-col sm:flex-row sm:items-center justify-between gap-4">
                     <div class="flex items-center space-x-3.5 sm:space-x-4">
                         <div class="relative shrink-0">
-                            <img src="https://placehold.co/64x64/92400e/fef3c7?text=R" class="w-14 h-14 sm:w-16 sm:h-16 rounded-2xl object-cover border-2 border-amber-400" alt="Hero Avatar">
-                            <span id="profileEquippedSticker" class="absolute -bottom-1.5 -right-1.5 w-7 h-7 rounded-full bg-stone-900 border border-amber-400 flex items-center justify-center text-sm shadow-md">⚔️</span>
+                            <img src="https://placehold.co/64x64/92400e/fef3c7?text=R" class="w-14 h-14 sm:w-16 sm:h-16 rounded-2xl object-cover border-2 border-amber-400" alt="Avatar">
+                            <span id="profileEquippedSticker" class="absolute -bottom-1.5 -right-1.5 w-7 h-7 rounded-full bg-stone-900 border border-amber-400 flex items-center justify-center text-sm shadow-md minimal-hide">⚔️</span>
                         </div>
                         <div class="min-w-0">
                             <div class="flex items-center space-x-2">
                                 <h3 id="profilePreviewName" class="display-heading font-bold text-lg deco-none">Reyna</h3>
-                                <span id="profileRankPill" class="px-2 py-0.5 rounded-md bg-amber-500/20 border border-amber-500/40 text-amber-300 text-[10px] font-bold">LV.1 INITIATE</span>
+                                <span id="profileRankPill" class="px-2 py-0.5 rounded-md bg-amber-500/20 border border-amber-500/40 text-amber-300 text-[10px] font-bold minimal-hide">LV.1 INITIATE</span>
                             </div>
-                            <p class="text-xs text-slate-300">Mythic Adventurer • <span id="profileTotalXp">20 XP</span></p>
+                            <p class="text-xs text-slate-300">Member • <span id="profileTotalXp">20 XP</span></p>
                             <p id="profileAccountEmail" class="text-xs text-emerald-400 truncate">Cloud Session Active</p>
                         </div>
                     </div>
@@ -962,8 +987,8 @@
                     </div>
                 </div>
 
-                <!-- XP Progress & Unlockables Vault -->
-                <div class="glass-panel p-4 sm:p-5 rounded-2xl space-y-4">
+                <!-- XP Progress & Unlockables Vault (Hidden in Minimalist mode) -->
+                <div class="glass-panel p-4 sm:p-5 rounded-2xl space-y-4 minimal-hide">
                     <div class="flex items-center justify-between">
                         <div>
                             <h4 class="display-heading text-sm font-bold text-amber-400">Active XP Progression & Unlockables</h4>
@@ -981,23 +1006,23 @@
                     </div>
 
                     <div class="space-y-2 pt-1">
-                        <span class="text-[11px] font-bold uppercase tracking-wider text-slate-400 block">Realm Stickers (Equip for Profile & Chat)</span>
+                        <span class="text-[11px] font-bold uppercase tracking-wider text-slate-400 block">Stickers (Equip for Profile & Chat)</span>
                         <div id="stickerVaultGrid" class="grid grid-cols-4 sm:grid-cols-6 gap-2"></div>
                     </div>
                 </div>
 
-                <!-- Hero Bio & Details Form -->
+                <!-- Bio & Details Form -->
                 <div class="grid grid-cols-1 sm:grid-cols-2 gap-4 sm:gap-5">
                     <div class="space-y-1.5">
                         <label class="text-xs font-semibold text-slate-300">Full Name</label>
                         <input type="text" id="inputFullName" value="Alexa Rawles" class="theme-input w-full rounded-xl px-4 py-2.5 text-sm font-medium">
                     </div>
                     <div class="space-y-1.5">
-                        <label class="text-xs font-semibold text-slate-300">Hero Nickname</label>
+                        <label class="text-xs font-semibold text-slate-300">Nickname</label>
                         <input type="text" id="inputNickName" value="Reyna" oninput="syncProfileNameLive(this.value)" class="theme-input w-full rounded-xl px-4 py-2.5 text-sm font-medium">
                     </div>
                     <div class="space-y-1.5">
-                        <label class="text-xs font-semibold text-slate-300">Primary Affinity</label>
+                        <label class="text-xs font-semibold text-slate-300">Primary Interest</label>
                         <select id="inputAffinity" class="theme-input w-full rounded-xl px-4 py-2.5 text-sm font-medium">
                             <option>Anime & Art</option>
                             <option>Gaming & Raids</option>
@@ -1006,7 +1031,7 @@
                         </select>
                     </div>
                     <div class="space-y-1.5">
-                        <label class="text-xs font-semibold text-slate-300">Realm / Country</label>
+                        <label class="text-xs font-semibold text-slate-300">Country</label>
                         <select id="inputCountry" class="theme-input w-full rounded-xl px-4 py-2.5 text-sm font-medium">
                             <option>India</option>
                             <option>Nigeria</option>
@@ -1016,7 +1041,7 @@
                         </select>
                     </div>
                     <div class="space-y-1.5 sm:col-span-2">
-                        <label class="text-xs font-semibold text-slate-300">Hero Bio & Motto</label>
+                        <label class="text-xs font-semibold text-slate-300">Bio & Motto</label>
                         <input type="text" id="inputBio" value="Exploring ancient dungeons, collecting lofi beats, and forging real connections." class="theme-input w-full rounded-xl px-4 py-2.5 text-sm font-medium">
                     </div>
                 </div>
@@ -1032,7 +1057,7 @@
             </div>
         </div>
 
-        <!-- ================= PAGE 6: GUILD (SLASH & BURN + 3 PLAYABLE MINI-GAMES + RAID) ================= -->
+        <!-- ================= PAGE 6: CLUB / GUILD (SLASH & BURN + 3 PLAYABLE MINI-GAMES + RAID) ================= -->
         <div id="tab-club" class="page-section hidden space-y-6 max-w-4xl mx-auto">
             <div class="glass-card ruin-corner p-5 sm:p-8 rounded-3xl shadow-2xl space-y-6">
                 <div class="flex flex-wrap items-center justify-between gap-3 pb-4 border-b border-white/10">
@@ -1041,20 +1066,20 @@
                             SB
                         </div>
                         <div class="min-w-0">
-                            <h2 class="display-heading text-lg sm:text-2xl font-bold truncate">Slash and Burn Guild</h2>
-                            <p class="text-xs text-slate-400 truncate">Rank #3 Dungeon Vanguard • <span id="guildHonorPoints" class="text-amber-400 font-bold">1,450 Honor</span></p>
+                            <h2 class="display-heading text-lg sm:text-2xl font-bold truncate">Slash and Burn Club</h2>
+                            <p class="text-xs text-slate-400 truncate">Rank #3 Community • <span id="guildHonorPoints" class="text-amber-400 font-bold">1,450 Honor</span></p>
                         </div>
                     </div>
-                    <button onclick="awardXp(5, 'Guild Check-in'); showToast('Daily Guild Honor & +5 XP claimed!')" class="theme-btn-secondary px-4 py-2 rounded-xl text-xs font-bold transition shrink-0">
+                    <button onclick="awardXp(5, 'Daily Check-in'); showToast('Daily Honor & +5 XP claimed!')" class="theme-btn-secondary px-4 py-2 rounded-xl text-xs font-bold transition shrink-0">
                         Daily Check-In
                     </button>
                 </div>
 
-                <!-- Co-op Raid Boss Encounter -->
+                <!-- Co-op Boss Encounter -->
                 <div class="glass-panel p-4 sm:p-5 rounded-2xl space-y-3">
                     <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
                         <div>
-                            <span class="text-[10px] font-bold uppercase tracking-widest text-rose-400">Active Guild Raid Boss</span>
+                            <span class="text-[10px] font-bold uppercase tracking-widest text-rose-400">Active Co-Op Challenge</span>
                             <h4 class="display-heading font-bold text-base">Obsidian Wyrm of the Sunken Vault</h4>
                         </div>
                         <button onclick="strikeRaidBoss()" class="theme-btn-primary px-5 py-2.5 rounded-xl text-xs font-bold transition active:scale-95">
@@ -1072,10 +1097,10 @@
                     </div>
                 </div>
 
-                <!-- 3 PLAYABLE GUILD MINI-GAMES ARCADE -->
+                <!-- 3 PLAYABLE MINI-GAMES ARCADE -->
                 <div class="space-y-3">
                     <div class="flex items-center justify-between">
-                        <span class="text-xs font-bold uppercase tracking-wider text-amber-400">Guild Trial Arcade (3 Playable Mini-Games)</span>
+                        <span class="text-xs font-bold uppercase tracking-wider text-amber-400">Mini-Game Arcade (3 Playable Trials)</span>
                         <span id="gameBestScoreLabel" class="text-xs font-mono text-slate-400">Best Slash Score: 0</span>
                     </div>
 
@@ -1122,7 +1147,7 @@
                             </button>
                         </div>
 
-                        <!-- Mini-Game 3: Tavern High-Roller Dice Duel -->
+                        <!-- Mini-Game 3: High-Roller Dice Duel -->
                         <div class="glass-panel p-4 rounded-2xl space-y-3 flex flex-col justify-between">
                             <div class="flex items-center justify-between">
                                 <div>
@@ -1148,10 +1173,10 @@
                     </div>
                 </div>
 
-                <!-- Guild Roster & Loot Rewards -->
-                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <!-- Roster & Loot Rewards -->
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4 minimal-hide">
                     <div class="space-y-2">
-                        <span class="text-xs font-bold text-slate-400 uppercase tracking-wider">Vanguard Roster</span>
+                        <span class="text-xs font-bold text-slate-400 uppercase tracking-wider">Top Members</span>
                         <div class="glass-panel p-4 rounded-2xl flex items-center justify-between">
                             <div class="flex items-center space-x-3">
                                 <img src="https://placehold.co/40x40/f59e0b/ffffff?text=N" class="w-10 h-10 rounded-xl object-cover" alt="Nani078">
@@ -1165,7 +1190,7 @@
                     </div>
 
                     <div class="space-y-2">
-                        <span class="text-xs font-bold text-slate-400 uppercase tracking-wider">Guild Treasury</span>
+                        <span class="text-xs font-bold text-slate-400 uppercase tracking-wider">Season Rewards</span>
                         <div class="glass-panel p-4 rounded-2xl flex items-center justify-between gap-3">
                             <div class="flex items-center space-x-3">
                                 <div class="w-10 h-10 rounded-xl bg-amber-500/20 text-amber-400 flex items-center justify-center font-bold shrink-0">🎁</div>
@@ -1192,7 +1217,7 @@
                         <i data-lucide="cloud" class="w-5 h-5"></i>
                     </div>
                     <div>
-                        <h3 class="display-heading font-bold text-base sm:text-lg">Realm Account & Cloud Save</h3>
+                        <h3 class="display-heading font-bold text-base sm:text-lg">Account & Cloud Save</h3>
                         <p id="authModalStatusText" class="text-[11px] text-emerald-400">Connected to AuraConnect Cloud</p>
                     </div>
                 </div>
@@ -1201,10 +1226,9 @@
                 </button>
             </div>
 
-            <!-- Current User Info Box -->
             <div class="glass-panel p-3.5 rounded-2xl text-xs space-y-1">
                 <div class="flex justify-between">
-                    <span class="text-slate-400">Active Hero:</span>
+                    <span class="text-slate-400">Active Profile:</span>
                     <span id="authCurrentHero" class="font-bold text-amber-400">Reyna (LV.1)</span>
                 </div>
                 <div class="flex justify-between">
@@ -1213,7 +1237,6 @@
                 </div>
             </div>
 
-            <!-- Email / Password Form to Link or Sign In -->
             <form onsubmit="event.preventDefault(); handleEmailAuthSubmit();" class="space-y-3">
                 <div class="space-y-1">
                     <label class="text-[11px] font-semibold text-slate-300">Email Address</label>
@@ -1253,8 +1276,8 @@
                         <i data-lucide="sparkles" class="w-4 h-4"></i>
                     </div>
                     <div>
-                        <h3 class="display-heading font-bold text-base sm:text-lg">Realm Visual Themes</h3>
-                        <p class="text-[11px] text-slate-400">Transform the entire interface & 3D void aesthetic</p>
+                        <h3 class="display-heading font-bold text-base sm:text-lg">Visual Themes</h3>
+                        <p class="text-[11px] text-slate-400">Each theme applies its own distinct layout & style</p>
                     </div>
                 </div>
                 <button onclick="closeSettingsModal()" class="text-slate-400 hover:text-white p-1.5 rounded-full hover:bg-white/10 transition">
@@ -1268,7 +1291,7 @@
                         <div class="w-11 h-11 rounded-2xl bg-gradient-to-br from-cyan-400 via-purple-500 to-pink-500 shrink-0 shadow-md"></div>
                         <div class="min-w-0">
                             <span class="font-bold text-sm block">1. Original Cosmos</span>
-                            <p class="text-xs text-slate-400 truncate">Sleek dark glassmorphism & pastel neon void bubbles</p>
+                            <p class="text-xs text-slate-400 truncate">Sleek dark glassmorphism & neon void (no dungeon stones)</p>
                         </div>
                     </div>
                     <i data-lucide="check-circle-2" data-theme-check="original" class="w-5 h-5 text-emerald-400 shrink-0 hidden"></i>
@@ -1278,8 +1301,8 @@
                     <div class="flex items-center space-x-3.5 min-w-0">
                         <div class="w-11 h-11 rounded-2xl bg-gradient-to-br from-amber-400 via-yellow-700 to-emerald-700 border border-amber-300/40 shrink-0 flex items-center justify-center text-amber-100 font-bold text-sm shadow-md">❖</div>
                         <div class="min-w-0">
-                            <span class="font-bold text-sm block">2. Ancient Ruins (Manhwa)</span>
-                            <p class="text-xs text-slate-400 truncate">3D carved stone slabs, golden runes & dungeon relics</p>
+                            <span class="font-bold text-sm block">2. Ancient Ruins (Dungeon)</span>
+                            <p class="text-xs text-slate-400 truncate">3D carved stone slabs, golden runes & mythic titles</p>
                         </div>
                     </div>
                     <i data-lucide="check-circle-2" data-theme-check="ruins" class="w-5 h-5 text-amber-400 shrink-0 hidden"></i>
@@ -1290,7 +1313,7 @@
                         <div class="w-11 h-11 rounded-2xl bg-white border-2 border-slate-900 shrink-0 flex items-center justify-center text-slate-900 font-bold text-xs">Aa</div>
                         <div class="min-w-0">
                             <span class="font-bold text-sm block">3. Pure Simple Minimalistic</span>
-                            <p class="text-xs text-slate-400 truncate">Distraction-free daylight surfaces & crisp lines</p>
+                            <p class="text-xs text-slate-400 truncate">Distraction-free daylight mode with simplified UI</p>
                         </div>
                     </div>
                     <i data-lucide="check-circle-2" data-theme-check="minimal" class="w-5 h-5 text-slate-900 shrink-0 hidden"></i>
@@ -1308,7 +1331,7 @@
     <aside id="miAmorDrawer" class="glass-modal fixed top-0 right-0 z-50 h-full w-[82vw] max-w-xs border-l p-5 flex flex-col justify-between transform translate-x-full transition-transform duration-300 shadow-2xl">
         <div class="space-y-4">
             <div class="flex items-center justify-between pb-3 border-b border-white/10">
-                <h3 class="display-heading font-extrabold text-lg tracking-wider text-amber-400">MI AMOR ALLIES</h3>
+                <h3 class="display-heading font-extrabold text-lg tracking-wider text-amber-400">SAVED ALLIES</h3>
                 <button onclick="toggleMiAmorDrawer(false)" class="p-1.5 rounded-full hover:bg-white/10 text-slate-400 hover:text-white">
                     <i data-lucide="x" class="w-5 h-5"></i>
                 </button>
@@ -1316,7 +1339,7 @@
             <div id="miAmorAlliesList" class="space-y-2.5 overflow-y-auto max-h-[75vh]"></div>
         </div>
         <button onclick="toggleMiAmorDrawer(false); switchTab('dice');" class="theme-btn-primary w-full py-2.5 rounded-xl text-xs font-bold shadow-lg">
-            Cast Fate Dice for Allies
+            Roll Dice for Allies
         </button>
     </aside>
 
@@ -1324,7 +1347,7 @@
     <div id="confessModal" class="hidden fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-sm">
         <div class="glass-modal p-5 sm:p-7 rounded-3xl max-w-md w-full space-y-4 shadow-2xl">
             <div class="flex items-center justify-between">
-                <h3 class="display-heading font-bold text-base sm:text-lg">Inscribe Anonymous Scroll</h3>
+                <h3 class="display-heading font-bold text-base sm:text-lg">Write Anonymous Confession</h3>
                 <button onclick="closeConfessModal()" class="text-slate-400 hover:text-white p-1"><i data-lucide="x" class="w-5 h-5"></i></button>
             </div>
             <div class="flex items-center gap-2">
@@ -1338,7 +1361,7 @@
             <textarea id="modalConfessText" rows="4" placeholder="Write your anonymous confession here (+15 XP)..." class="theme-input w-full rounded-2xl p-3.5 text-sm focus:outline-none"></textarea>
             <div class="flex justify-end space-x-2">
                 <button onclick="closeConfessModal()" class="px-4 py-2 rounded-xl text-xs font-semibold text-slate-300 hover:bg-white/10 transition">Cancel</button>
-                <button onclick="submitModalConfession()" class="theme-btn-primary px-5 py-2 rounded-xl text-xs font-bold shadow-lg transition">Inscribe</button>
+                <button onclick="submitModalConfession()" class="theme-btn-primary px-5 py-2 rounded-xl text-xs font-bold shadow-lg transition">Post</button>
             </div>
         </div>
     </div>
@@ -1364,7 +1387,7 @@
         <div class="glass-modal p-4 sm:p-5 rounded-3xl max-w-lg w-full space-y-3 shadow-2xl">
             <div class="flex items-center space-x-2 bg-white/5 px-3.5 py-2.5 rounded-2xl border border-white/10">
                 <i data-lucide="search" class="w-4 h-4 text-slate-400 shrink-0"></i>
-                <input type="text" id="globalSearchInput" oninput="runGlobalSearch(this.value)" placeholder="Search scrolls, matched souls, guilds..." class="w-full bg-transparent text-xs sm:text-sm focus:outline-none">
+                <input type="text" id="globalSearchInput" oninput="runGlobalSearch(this.value)" placeholder="Search confessions, allies, clubs..." class="w-full bg-transparent text-xs sm:text-sm focus:outline-none">
                 <button onclick="closeSearchModal()" class="text-slate-400 hover:text-white p-1"><i data-lucide="x" class="w-4 h-4"></i></button>
             </div>
             <div id="searchResultsBox" class="text-xs text-slate-300 space-y-1.5 max-h-48 overflow-y-auto">
@@ -1427,7 +1450,7 @@
         ];
 
         const NAME_DECORATIONS = [
-            { id: 'deco-none', name: 'Plain Stone', minLevel: 1 },
+            { id: 'deco-none', name: 'Plain', minLevel: 1 },
             { id: 'deco-emerald', name: 'Jade Rune', minLevel: 2 },
             { id: 'deco-gold', name: 'Aurelia Gold', minLevel: 3 },
             { id: 'deco-crimson', name: 'Crimson Slash', minLevel: 4 },
@@ -1436,22 +1459,22 @@
         ];
 
         const FATE_PEERS = [
-            { id: 'clara', name: 'Clara', role: 'Runic Illustrator', sticker: '🎨', rank: 'LV.4 RUNEBLADE', vibe: 'Anime & Art', compat: 96, avatar: 'https://placehold.co/52x52/10b981/ffffff?text=C', tags: ['Digital Art', 'Manhwa', 'Worldbuilding'], bio: "I'm an anime & manhwa enthusiast. Looking forward to connect with travelers interested in digital art and animation.", replies: ["That sounds amazing! Have you read any new dungeon manhwa lately?", "I'd love to sketch your Hero emblem sometime!", "Totally agree—late night creative sessions hit differently."] },
-            { id: 'kai', name: 'Kai', role: 'Tavern Bard', sticker: '🎧', rank: 'LV.3 SEEKER', vibe: 'Music & Lofi', compat: 92, avatar: 'https://placehold.co/52x52/d97706/ffffff?text=K', tags: ['Lofi Beats', 'Synthwave', 'Night Owls'], bio: "I collect lofi playlists, explore ancient lore, and enjoy late-night conversations over warm synth chords.", replies: ["Drop your favorite chill track—I'm queuing up the Tavern radio!", "Nothing beats rain sounds + lofi after a long day.", "Let's hang out in the Tavern stage soon!"] },
+            { id: 'clara', name: 'Clara', role: 'Runic Illustrator', sticker: '🎨', rank: 'LV.4 RUNEBLADE', vibe: 'Anime & Art', compat: 96, avatar: 'https://placehold.co/52x52/10b981/ffffff?text=C', tags: ['Digital Art', 'Manhwa', 'Worldbuilding'], bio: "I'm an anime & manhwa enthusiast. Looking forward to connect with travelers interested in digital art and animation.", replies: ["That sounds amazing! Have you read any new dungeon manhwa lately?", "I'd love to sketch your emblem sometime!", "Totally agree—late night creative sessions hit differently."] },
+            { id: 'kai', name: 'Kai', role: 'Tavern Bard', sticker: '🎧', rank: 'LV.3 SEEKER', vibe: 'Music & Lofi', compat: 92, avatar: 'https://placehold.co/52x52/d97706/ffffff?text=K', tags: ['Lofi Beats', 'Synthwave', 'Night Owls'], bio: "I collect lofi playlists, explore ancient lore, and enjoy late-night conversations over warm synth chords.", replies: ["Drop your favorite chill track—I'm queuing up the Live radio!", "Nothing beats rain sounds + lofi after a long day.", "Let's hang out in the Live stage soon!"] },
             { id: 'mira', name: 'Mira', role: 'Chronicle Keeper', sticker: '📚', rank: 'LV.5 ARCHON', vibe: 'Deep Talks', compat: 94, avatar: 'https://placehold.co/52x52/7c3aed/ffffff?text=M', tags: ['Philosophy', 'Storytelling', 'Safe Space'], bio: "Fantasy novels, quiet stargazing, and honest anonymous confessions are my sanctuary.", replies: ["Sometimes putting feelings into words takes half the weight off.", "I'm always here if you want someone to listen without judgment.", "What a thoughtful perspective—tell me more!"] },
-            { id: 'thorne', name: 'Thorne', role: 'Vanguard Striker', sticker: '⚔️', rank: 'LV.6 WARDEN', vibe: 'Gaming & Raids', compat: 89, avatar: 'https://placehold.co/52x52/dc2626/ffffff?text=T', tags: ['Co-op Raids', 'Strategy', 'Slash & Burn'], bio: "Leading front-line dungeon raids in Slash & Burn. Always recruiting sharp minds for boss trials!", replies: ["Grab your blade—the Obsidian Wyrm won't defeat itself!", "Nice! What's your high score in the Rune Slash trial?", "See you in the Guild Hall!"] },
-            { id: 'lyra', name: 'Lyra', role: 'Astral Weaver', sticker: '🔮', rank: 'LV.4 RUNEBLADE', vibe: 'Anime & Art', compat: 91, avatar: 'https://placehold.co/52x52/ec4899/ffffff?text=L', tags: ['Character Design', 'Cosplay', 'Lore'], bio: "Designing mythic outfits and magical artifacts. Let's trade character concepts!", replies: ["Your equipped sticker looks awesome with the Ancient Ruins theme!", "I love designing glowing runic armor!", "Let's connect and share ideas!"] }
+            { id: 'thorne', name: 'Thorne', role: 'Vanguard Striker', sticker: '⚔️', rank: 'LV.6 WARDEN', vibe: 'Gaming & Raids', compat: 89, avatar: 'https://placehold.co/52x52/dc2626/ffffff?text=T', tags: ['Co-op Raids', 'Strategy', 'Slash & Burn'], bio: "Leading front-line raids in Slash & Burn. Always recruiting sharp minds for boss trials!", replies: ["Grab your blade—the Obsidian Wyrm won't defeat itself!", "Nice! What's your high score in the Rune Slash trial?", "See you in the Club Hall!"] },
+            { id: 'lyra', name: 'Lyra', role: 'Astral Weaver', sticker: '🔮', rank: 'LV.4 RUNEBLADE', vibe: 'Anime & Art', compat: 91, avatar: 'https://placehold.co/52x52/ec4899/ffffff?text=L', tags: ['Character Design', 'Cosplay', 'Lore'], bio: "Designing mythic outfits and magical artifacts. Let's trade character concepts!", replies: ["Your equipped sticker looks awesome!", "I love designing glowing armor!", "Let's connect and share ideas!"] }
         ];
 
         const DAILY_QUESTS_DEF = [
-            { id: 'q_confess', title: 'Inscribe 1 Sacred Scroll', xp: 20 },
-            { id: 'q_dice', title: 'Cast the Fate Polyhedron', xp: 15 },
-            { id: 'q_tavern', title: 'Speak or React in Tavern', xp: 15 },
-            { id: 'q_guild', title: 'Strike Guild Boss or Play Trial', xp: 20 }
+            { id: 'q_confess', title: 'Write 1 Anonymous Confession', xp: 20 },
+            { id: 'q_dice', title: 'Roll the Fate Dice', xp: 15 },
+            { id: 'q_tavern', title: 'Speak or React in Live Stage', xp: 15 },
+            { id: 'q_guild', title: 'Strike Boss or Play Mini-Game', xp: 20 }
         ];
 
         const defaultState = {
-            theme: 'ruins',
+            theme: 'original',
             xp: 20,
             streak: 1,
             nickName: 'Reyna',
@@ -1469,9 +1492,9 @@
             questsDone: {},
             savedMatchIds: ['clara', 'kai', 'mira'],
             chatHistories: {
-                clara: [{ from: 'peer', text: 'Greetings traveler! Ready to explore the realm?' }],
-                kai: [{ from: 'peer', text: 'Welcome to the Tavern—tune into the lofi synth anytime.' }],
-                mira: [{ from: 'peer', text: 'The scrolls remember every brave truth.' }]
+                clara: [{ from: 'peer', text: 'Greetings traveler! Ready to explore?' }],
+                kai: [{ from: 'peer', text: 'Welcome—tune into the lofi synth anytime.' }],
+                mira: [{ from: 'peer', text: 'Every honest confession helps lighten the load.' }]
             },
             confessions: [
                 { id: 'c1', author: 'Anonymous381', sticker: '📜', mood: 'Reflective', date: 'Jun 10, 2024', time: '9:40 AM', likes: 14, text: "I've wasted every second of it. By the end of it, I weigh at 260 and it haunts me all the time. I'm trying to rebuild myself day by day...", replies: ["Keep going—every single day you choose to try is a victory."] },
@@ -1602,7 +1625,6 @@
             } catch (_) {}
         }
 
-        // Auth Modal Handlers
         window.openAuthModal = () => {
             const { current } = getCurrentRankInfo(appState.xp);
             if ($('authCurrentHero')) $('authCurrentHero').textContent = `${appState.nickName} (LV.${current.level} ${current.title})`;
@@ -1652,7 +1674,7 @@
                 } catch (_) {}
             }
             closeAuthModal();
-            showToast('Session switched to fresh Guest Hero.');
+            showToast('Session switched to fresh Guest Profile.');
         };
 
         // =========================================================================
@@ -1737,7 +1759,7 @@
             persistState();
             renderProgressionUI();
             if (after.current.level > prevLevel) {
-                showToast(`🎉 RANK UP! LV.${after.current.level} ${after.current.title} unlocked! Check Hero Vault!`);
+                showToast(`🎉 LEVEL UP! LV.${after.current.level} ${after.current.title} unlocked!`);
             }
         }
 
@@ -1752,7 +1774,7 @@
                     <div class="glass-panel p-3 rounded-2xl flex items-center justify-between gap-2 ${done ? 'opacity-70 border-emerald-500/30' : ''}">
                         <div class="flex items-center space-x-2.5 min-w-0">
                             <span class="w-6 h-6 rounded-lg flex items-center justify-center text-xs font-bold shrink-0 ${done ? 'bg-emerald-500/20 text-emerald-400' : 'bg-amber-500/15 text-amber-400'}">
-                                ${done ? '✓' : '❖'}
+                                ${done ? '✓' : '•'}
                             </span>
                             <span class="text-xs font-semibold truncate ${done ? 'line-through text-slate-400' : ''}">${q.title}</span>
                         </div>
@@ -1879,8 +1901,8 @@
             appState.bio = $('inputBio')?.value.trim() || appState.bio;
             persistState();
             renderProgressionUI();
-            awardXp(10, 'Saved Hero Profile');
-            showToast('Hero profile synced to cloud! (+10 XP)');
+            awardXp(10, 'Saved Profile');
+            showToast('Profile synced to cloud! (+10 XP)');
         };
 
         window.exportSaveBackup = () => {
@@ -1890,11 +1912,11 @@
             dummy.select();
             try { document.execCommand('copy'); } catch (_) {}
             document.body.removeChild(dummy);
-            showToast('Hero Save Code copied to clipboard!');
+            showToast('Save Code copied to clipboard!');
         };
 
         // =========================================================================
-        // 4. TOASTS (MAX 3 POP-UPS) & THEME SWITCHING
+        // 4. TOASTS (MAX 3 POP-UPS) & STRICT THEME VARIANT ISOLATION
         // =========================================================================
         window.showToast = (message) => {
             const host = $('toastContainer');
@@ -1924,7 +1946,7 @@
         };
 
         window.applyTheme = (themeKey, notify = true) => {
-            const key = THEME_META[themeKey] ? themeKey : 'ruins';
+            const key = THEME_META[themeKey] ? themeKey : 'original';
             const meta = THEME_META[key];
             document.documentElement.setAttribute('data-theme', key);
             appState.theme = key;
@@ -1940,6 +1962,7 @@
                 }
             }
 
+            // Theme-specific Navigation Tab Labels (Ancient Ruins uses mythic titles; Original & Minimal use standard clean titles)
             const labels = key === 'ruins'
                 ? { home: 'Sanctum', dice: 'Fate', live: 'Tavern', confessions: 'Scrolls', profile: 'Hero', club: 'Guild' }
                 : { home: 'Home', dice: 'Dice', live: 'Live', confessions: 'Confessions', profile: 'Profile', club: 'Club' };
@@ -1956,11 +1979,11 @@
             });
 
             if (voidState.initialized) scheduleVoidRender();
-            if (notify) showToast(`Realm shifted to ${meta.label}`);
+            if (notify) showToast(`Theme switched to ${meta.label}`);
         };
 
         // =========================================================================
-        // 5. FATE DICE 3D TUMBLE, FILTERS & REAL 1-ON-1 CHAT ENGINE
+        // 5. DICE / FATE 3D TUMBLE, FILTERS & REAL 1-ON-1 CHAT ENGINE
         // =========================================================================
         let activeFateFilter = 'All';
         let currentRolledPeer = FATE_PEERS[0];
@@ -1974,14 +1997,14 @@
                     ? 'fate-filter-btn px-3 py-1 rounded-full text-[11px] font-bold bg-amber-500/25 border border-amber-400/60 text-amber-200 transition'
                     : 'fate-filter-btn px-3 py-1 rounded-full text-[11px] font-semibold bg-white/5 border border-white/10 text-slate-300 transition';
             });
-            showToast(`Fate Resonance set to: ${vibe}`);
+            showToast(`Interest filter set to: ${vibe}`);
         };
 
         window.rollDiceMatch = () => {
             const btn = $('rollBtn'), cube = $('fateCube'), waiting = $('diceWaitingBox'), result = $('diceResultCard');
             if (btn?.disabled) return;
             btn.disabled = true;
-            btn.textContent = 'CASTING FATE…';
+            btn.textContent = 'ROLLING…';
             waiting?.classList.remove('hidden');
             result?.classList.add('hidden');
             $('diceChatBtn')?.classList.add('hidden');
@@ -2010,7 +2033,7 @@
                 $('matchRole').textContent = next.role;
                 $('matchStickerBadge').textContent = next.sticker;
                 $('matchRankTag').textContent = next.rank;
-                $('matchCompatBadge').textContent = `${next.compat}% Resonance`;
+                $('matchCompatBadge').textContent = `${next.compat}% Match`;
                 $('matchBio').textContent = `“${next.bio}”`;
                 $('matchAvatar').src = next.avatar;
                 $('matchInterestTags').innerHTML = next.tags.map(t => `<span class="px-2.5 py-0.5 rounded-full bg-white/10 text-[10px] font-semibold text-amber-200">#${t}</span>`).join('');
@@ -2020,10 +2043,10 @@
                 $('diceChatBtn')?.classList.remove('hidden');
                 $('diceBookmarkBtn')?.classList.remove('hidden');
                 btn.disabled = false;
-                btn.textContent = 'CAST AGAIN (+10 XP)';
+                btn.textContent = 'ROLL AGAIN (+10 XP)';
 
                 completeQuest('q_dice');
-                awardXp(10, 'Cast Fate Polyhedron');
+                awardXp(10, 'Rolled Fate Dice');
             }, 860);
         };
 
@@ -2031,14 +2054,14 @@
             if (!appState.savedMatchIds.includes(currentRolledPeer.id)) {
                 appState.savedMatchIds.push(currentRolledPeer.id);
                 if (!appState.chatHistories[currentRolledPeer.id]) {
-                    appState.chatHistories[currentRolledPeer.id] = [{ from: 'peer', text: `Hey ${appState.nickName}! Glad the Fate Dice connected us ✨` }];
+                    appState.chatHistories[currentRolledPeer.id] = [{ from: 'peer', text: `Hey ${appState.nickName}! Glad we matched ✨` }];
                 }
                 persistState();
                 renderSavedMatchesUI();
                 renderProgressionUI();
-                showToast(`${currentRolledPeer.name} saved to MI AMOR Allies!`);
+                showToast(`${currentRolledPeer.name} saved to Allies!`);
             } else {
-                showToast(`${currentRolledPeer.name} is already in your Saved Bonds!`);
+                showToast(`${currentRolledPeer.name} is already saved!`);
             }
         };
 
@@ -2051,7 +2074,7 @@
         window.selectFateChatPeer = (peerId) => {
             activeChatPeerId = peerId;
             const peer = FATE_PEERS.find(p => p.id === peerId) || FATE_PEERS[0];
-            if ($('fateChatHeaderTitle')) $('fateChatHeaderTitle').textContent = `Whisper: ${peer.name} ${peer.sticker}`;
+            if ($('fateChatHeaderTitle')) $('fateChatHeaderTitle').textContent = `Chat: ${peer.name} ${peer.sticker}`;
             renderSavedMatchesUI();
             renderFateChatMessages();
         };
@@ -2120,7 +2143,7 @@
             input.value = '';
             persistState();
             renderFateChatMessages();
-            awardXp(5, 'Sent Fate Whisper');
+            awardXp(5, 'Sent Message');
 
             const peer = FATE_PEERS.find(p => p.id === activeChatPeerId) || FATE_PEERS[0];
             setTimeout(() => {
@@ -2132,10 +2155,10 @@
         };
 
         // =========================================================================
-        // 6. TAVERN LIVE STAGE: SPECTRUM VISUALIZER, RADIO API, CINEMA & DJ PADS
+        // 6. LIVE STAGE: SPECTRUM VISUALIZER, RADIO API, CINEMA & DJ PADS
         // =========================================================================
         let liveStations = [
-            { name: 'Ancient Tavern Hearth & Rain Synth', tag: 'BUILT-IN WEB AUDIO • ZERO LATENCY', url: null, isSynth: true },
+            { name: 'Ambient Hearth & Rain Synth', tag: 'BUILT-IN WEB AUDIO • ZERO LATENCY', url: null, isSynth: true },
             { name: 'Lofi Beats 24/7 Chillhop FM', tag: 'LIVE GLOBAL STREAM • CHILL', url: 'https://streams.ilovemusic.de/iloveradio17.mp3', isSynth: false },
             { name: 'Nightride FM • Synthwave', tag: 'LIVE GLOBAL STREAM • SYNTHWAVE', url: 'https://stream.nightride.fm/nightride.m4a', isSynth: false }
         ];
@@ -2274,7 +2297,7 @@
                 filter.connect(rainGain);
                 rainGain.connect(audioCtx.destination);
                 rainNode.start();
-                showToast('Tavern rain ambience enabled 🌧️');
+                showToast('Rain ambience enabled 🌧️');
             } else if (rainNode) {
                 try { rainNode.stop(); } catch (_) {}
                 rainNode = null;
@@ -2311,7 +2334,7 @@
             } else {
                 startActiveAudio();
                 completeQuest('q_tavern');
-                awardXp(6, 'Tavern Audio');
+                awardXp(6, 'Live Audio');
             }
         };
 
@@ -2335,7 +2358,6 @@
             showToast(`${label} ${active ? 'enabled' : 'disabled'}`);
         };
 
-        // Real-time Canvas Spectrum Visualizer
         function startSpectrumLoop() {
             const canvas = $('tavernSpectrumCanvas');
             if (!canvas) return;
@@ -2354,7 +2376,7 @@
                         : 0.12 + Math.sin(phase + i * 0.3) * 0.04;
                     const barH = Math.max(6, amp * (h - 16));
                     const grad = ctx.createLinearGradient(0, h, 0, h - barH);
-                    grad.addColorStop(0, '#d8ad4d');
+                    grad.addColorStop(0, '#a855f7');
                     grad.addColorStop(1, '#34d399');
                     ctx.fillStyle = grad;
                     ctx.fillRect(i * (barW + 3) + 2, h - barH - 6, barW, barH);
@@ -2364,7 +2386,6 @@
             if (!spectrumAnimId) draw();
         }
 
-        // Interactive Web Audio DJ Soundboard
         window.playDjPad = (type, silentToast = false) => {
             ensureAudioCtx();
             const now = audioCtx.currentTime;
@@ -2411,11 +2432,10 @@
             const btn = $('voiceCallBtn'), lbl = $('voiceCallLabel');
             if (lbl) lbl.textContent = voiceJoined ? 'In Voice ●' : 'Join Voice';
             btn?.classList.toggle('border-emerald-400', voiceJoined);
-            showToast(voiceJoined ? 'Connected to Tavern Voice Hearth!' : 'Left Voice Hearth');
-            if (voiceJoined) awardXp(6, 'Voice Hearth');
+            showToast(voiceJoined ? 'Connected to Voice Room!' : 'Left Voice Room');
+            if (voiceJoined) awardXp(6, 'Voice Room');
         };
 
-        // Interactive Tavern Poll
         let pollState = {
             votedIdx: -1,
             options: [
@@ -2449,21 +2469,20 @@
             pollState.votedIdx = idx;
             pollState.options[idx].votes++;
             renderTavernPoll();
-            awardXp(4, 'Voted in Tavern Poll');
+            awardXp(4, 'Voted in Live Poll');
             showToast('Vote recorded!');
         };
 
-        // Tavern Chat (Syncs to Firestore if connected)
         const defaultTavernMessages = [
-            { author: 'Kaelen', sticker: '🎧', deco: 'deco-gold', text: 'This tavern hearth & rain synth hits different at night 🕯️' },
-            { author: 'Sera', sticker: '⚔️', deco: 'deco-emerald', text: 'Who is ready for the Obsidian Wyrm raid in Guild?' }
+            { author: 'Kaelen', sticker: '🎧', deco: 'deco-gold', text: 'This rain synth hits different at night 🕯️' },
+            { author: 'Sera', sticker: '⚔️', deco: 'deco-emerald', text: 'Who is ready for the Obsidian Wyrm challenge in Club?' }
         ];
         function renderTavernMessages(msgs = defaultTavernMessages) {
             const list = $('liveCommentsList');
             if (!list) return;
             list.innerHTML = msgs.map(m => `
                 <div class="flex items-start space-x-2 p-2 rounded-xl bg-white/5">
-                    <span class="w-6 h-6 rounded-full bg-amber-500/25 text-amber-200 flex items-center justify-center font-bold text-xs shrink-0">${m.sticker || '⚔️'}</span>
+                    <span class="w-6 h-6 rounded-full bg-amber-500/25 text-amber-200 flex items-center justify-center font-bold text-xs shrink-0 minimal-hide">${m.sticker || '⚔️'}</span>
                     <p class="text-slate-200"><span class="font-bold ${m.deco || 'text-amber-300'}">${m.author}:</span> ${m.text}</p>
                 </div>
             `).join('');
@@ -2483,7 +2502,7 @@
             if (!msg) return;
             input.value = '';
             completeQuest('q_tavern');
-            awardXp(5, 'Tavern Chat');
+            awardXp(5, 'Live Chat');
 
             const payload = {
                 author: appState.nickName,
@@ -2511,11 +2530,11 @@
             dummy.select();
             try { document.execCommand('copy'); } catch (_) {}
             document.body.removeChild(dummy);
-            showToast('Tavern summon link copied!');
+            showToast('Invite link copied!');
         };
 
         // =========================================================================
-        // 7. SANCTUM FEED, 3D INFINITE VOID SCROLLS & REPLY MODAL
+        // 7. HOME FEED, 3D INFINITE VOID CONFESSIONS & REPLY MODAL
         // =========================================================================
         let inspectedScrollId = null;
 
@@ -2526,7 +2545,7 @@
                 <div class="confession-diagonal ruin-corner p-5 sm:p-6 rounded-3xl relative overflow-hidden border border-white/10 shadow-xl flex flex-col justify-between min-h-[190px]">
                     <div class="flex items-start justify-between gap-3">
                         <div class="flex flex-col space-y-1.5 shrink-0">
-                            <div class="w-9 h-9 rounded-full bg-amber-500/20 flex items-center justify-center border border-amber-400/40 text-amber-300 text-sm">${c.sticker || '📜'}</div>
+                            <div class="w-9 h-9 rounded-full bg-amber-500/20 flex items-center justify-center border border-amber-400/40 text-amber-300 text-sm minimal-hide">${c.sticker || '📜'}</div>
                             <span class="text-[11px] font-semibold text-slate-300">By ${c.author}</span>
                         </div>
                         <p onclick="openScrollInspect('${c.id}')" class="cursor-pointer text-xs sm:text-sm text-slate-100 leading-relaxed text-right max-w-[64%] hover:opacity-90">
@@ -2557,7 +2576,7 @@
             item.likes = (item.likes || 0) + 1;
             persistState();
             renderHomeConfessions();
-            awardXp(2, 'Resonated with Scroll');
+            awardXp(2, 'Liked Confession');
         };
 
         window.openScrollInspect = (id) => {
@@ -2570,7 +2589,7 @@
             const reps = item.replies || [];
             repBox.innerHTML = reps.length
                 ? reps.map(r => `<div class="p-2.5 rounded-xl bg-white/5 text-slate-200">💬 ${r}</div>`).join('')
-                : '<p class="text-slate-400 italic">No whispers yet—be the first to leave encouragement.</p>';
+                : '<p class="text-slate-400 italic">No replies yet—be the first to leave encouragement.</p>';
             $('scrollInspectModal')?.classList.remove('hidden');
         };
         window.closeScrollInspectModal = () => $('scrollInspectModal')?.classList.add('hidden');
@@ -2587,14 +2606,14 @@
                 persistState();
                 openScrollInspect(inspectedScrollId);
                 renderHomeConfessions();
-                awardXp(5, 'Replied to Scroll');
+                awardXp(5, 'Replied to Confession');
                 showToast('Anonymous encouragement added! (+5 XP)');
             }
         };
 
         function addConfession(text, mood = 'Reflective') {
             const message = text.trim();
-            if (!message) { showToast('Write something before inscribing.'); return false; }
+            if (!message) { showToast('Write something before posting.'); return false; }
             const entry = {
                 id: 'c_' + Date.now(),
                 author: appState.nickName,
@@ -2613,8 +2632,8 @@
             renderProgressionUI();
             if (voidState.initialized) scheduleVoidRender();
             completeQuest('q_confess');
-            awardXp(15, 'Inscribed Scroll');
-            showToast('Scroll inscribed into the realm! (+15 XP)');
+            awardXp(15, 'Posted Confession');
+            showToast('Confession posted! (+15 XP)');
             return true;
         }
 
@@ -2637,7 +2656,7 @@
 
         window.cycleVoidFilter = () => {
             voidState.filter = (voidState.filter + 1) % FILTERS.length;
-            showToast(`Scroll mood: ${FILTERS[voidState.filter]}`);
+            showToast(`Mood filter: ${FILTERS[voidState.filter]}`);
             scheduleVoidRender();
         };
 
@@ -2674,7 +2693,7 @@
                 bubble.textContent = item.text.length > 92 ? item.text.slice(0, 89) + '…' : item.text;
                 bubble.addEventListener('click', () => {
                     if (voidState.didDrag) return;
-                    awardXp(3, 'Inspected Void Scroll');
+                    awardXp(3, 'Read Confession');
                     openScrollInspect(item.id);
                 });
                 pool.append(bubble);
@@ -2687,7 +2706,7 @@
         window.resetVoidCenter = (notify = false) => {
             voidState.panX = 0; voidState.panY = 0; voidState.wasShiftedAway = false; voidState.epoch++;
             scheduleVoidRender();
-            if (notify) { awardXp(4, 'Summoned New Scrolls'); showToast('Void recentered with fresh scrolls! (+4 XP)'); }
+            if (notify) { awardXp(4, 'Refreshed Feed'); showToast('Feed recentered! (+4 XP)'); }
         };
 
         function initVoid() {
@@ -2727,35 +2746,34 @@
         }
 
         // =========================================================================
-        // 8. GUILD RAID BOSS & 3 PLAYABLE MINI-GAMES
+        // 8. CLUB BOSS & 3 PLAYABLE MINI-GAMES
         // =========================================================================
         window.strikeRaidBoss = () => {
             if (appState.bossHp <= 0) {
                 appState.bossHp = 10000;
-                showToast('A new Obsidian Wyrm has emerged from the depths!');
+                showToast('A new Obsidian Wyrm has emerged!');
             } else {
                 const dmg = Math.floor(Math.random() * 280) + 180;
                 appState.bossHp = Math.max(0, appState.bossHp - dmg);
                 appState.guildHonor += 25;
-                showToast(`⚔️ Dealt ${dmg} Runic Damage! (+12 XP, +25 Honor)`);
+                showToast(`⚔️ Dealt ${dmg} Damage! (+12 XP, +25 Honor)`);
             }
             persistState();
             renderProgressionUI();
             completeQuest('q_guild');
-            awardXp(12, 'Raid Boss Strike');
+            awardXp(12, 'Boss Strike');
         };
 
         window.claimGuildChest = () => {
-            if (appState.chestClaimed) { showToast('Season 3 Relic Chest already claimed!'); return; }
+            if (appState.chestClaimed) { showToast('Season 3 Chest already claimed!'); return; }
             appState.chestClaimed = true;
             appState.guildHonor += 150;
             persistState();
             renderProgressionUI();
-            awardXp(35, 'Claimed Relic Chest');
-            showToast('🎁 Relic Chest opened! +35 XP & +150 Honor!');
+            awardXp(35, 'Claimed Chest');
+            showToast('🎁 Chest opened! +35 XP & +150 Honor!');
         };
 
-        // Mini-Game 1: Rune Slash
         let slashTimer = null, slashSpawnTimer = null, slashScore = 0, slashActive = false;
         let slashCellStates = ['·', '·', '·', '·', '·', '·'];
 
@@ -2813,7 +2831,6 @@
             $('slashGameHud').textContent = String(slashScore);
         };
 
-        // Mini-Game 2: Relic Seal Memory
         let memSequence = [], memPlayerStep = 0, memAcceptingInput = false;
         window.startMemoryTrial = () => {
             memSequence = [Math.floor(Math.random() * 4), Math.floor(Math.random() * 4), Math.floor(Math.random() * 4)];
@@ -2837,15 +2854,14 @@
                     memAcceptingInput = false; $('memoryRoundLabel').textContent = 'UNLOCKED!';
                     appState.guildHonor += 40; persistState(); renderProgressionUI();
                     completeQuest('q_guild'); awardXp(20, 'Relic Seal Memory');
-                    showToast('🔮 Relic Seal unlocked! +20 XP & +40 Honor!');
+                    showToast('🔮 Seal unlocked! +20 XP & +40 Honor!');
                 }
             } else {
                 memAcceptingInput = false; $('memoryRoundLabel').textContent = 'FAILED';
-                showToast('Wrong rune sequence! Tap Begin Seal to retry.');
+                showToast('Wrong sequence! Tap Begin Seal to retry.');
             }
         };
 
-        // Mini-Game 3: Tavern High-Roller 2d6 Duel
         window.playHighRollerDuel = () => {
             registerUserActivity();
             const pRoll = (Math.floor(Math.random() * 6) + 1) + (Math.floor(Math.random() * 6) + 1);
@@ -2880,8 +2896,6 @@
             document.querySelectorAll('.nav-btn').forEach(btn => {
                 const active = btn.id === 'nav-' + tabId;
                 btn.classList.toggle('nav-active', active);
-                btn.classList.toggle('bg-white/20', active);
-                btn.classList.toggle('text-white', active);
                 btn.classList.toggle('font-semibold', active);
                 btn.classList.toggle('text-slate-300', !active);
                 if (active) btn.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'center' });
@@ -2914,9 +2928,9 @@
             const matchedScrolls = appState.confessions.filter(c => c.text.toLowerCase().includes(term) || c.author.toLowerCase().includes(term));
             const matchedPeers = FATE_PEERS.filter(p => p.name.toLowerCase().includes(term) || p.vibe.toLowerCase().includes(term));
             box.innerHTML = [
-                ...matchedPeers.map(p => `<div onclick="closeSearchModal(); switchTab('dice'); selectFateChatPeer('${p.id}');" class="p-2 rounded-xl bg-white/5 hover:bg-white/10 cursor-pointer">👤 Soul Ally: <b>${p.name}</b> (${p.vibe})</div>`),
-                ...matchedScrolls.map(c => `<div onclick="closeSearchModal(); openScrollInspect('${c.id}');" class="p-2 rounded-xl bg-white/5 hover:bg-white/10 cursor-pointer">📜 Scroll by <b>${c.author}</b>: “${c.text.slice(0, 55)}…”</div>`)
-            ].join('') || '<div class="text-slate-400 px-1">No matching scrolls or allies found.</div>';
+                ...matchedPeers.map(p => `<div onclick="closeSearchModal(); switchTab('dice'); selectFateChatPeer('${p.id}');" class="p-2 rounded-xl bg-white/5 hover:bg-white/10 cursor-pointer">👤 Ally: <b>${p.name}</b> (${p.vibe})</div>`),
+                ...matchedScrolls.map(c => `<div onclick="closeSearchModal(); openScrollInspect('${c.id}');" class="p-2 rounded-xl bg-white/5 hover:bg-white/10 cursor-pointer">📜 Confession by <b>${c.author}</b>: “${c.text.slice(0, 55)}…”</div>`)
+            ].join('') || '<div class="text-slate-400 px-1">No matching confessions or allies found.</div>';
         };
 
         window.addEventListener('keydown', e => {

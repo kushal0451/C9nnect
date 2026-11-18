@@ -18,7 +18,7 @@ const ADMIN_SECRET = process.env.ADMIN_SECRET || 'admin123';
 
 app.use(cors());
 app.use(express.json());
-app.use(express.static(path.join(__dirname, '../public')));
+app.use(express.static(path.join(__dirname)));
 
 const STICKER_UNLOCKS = [
   { level: 1, icon: '✨' }, { level: 1, icon: '🔥' },

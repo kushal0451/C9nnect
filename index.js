@@ -1,268 +1,315 @@
 require('dotenv').config();
 const express = require('express');
 const http = require('http');
-const { Server } = require('socket.io');
-const cors = require('cors');
 const path = require('path');
+const crypto = require('crypto');
+const cors = require('cors');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
+const nodemailer = require('nodemailer');
+const { WebSocketServer } = require('ws');
 const db = require('./db');
 
 const app = express();
 const server = http.createServer(app);
-const io = new Server(server, { cors: { origin: '*' } });
+const wss = new WebSocketServer({ server });
 
 const PORT = process.env.PORT || 3000;
-const JWT_SECRET = process.env.JWT_SECRET || 'auraconnect_super_secret_key_change_in_prod';
+const JWT_SECRET = process.env.JWT_SECRET || 'c9nnect_super_secret_change_in_prod';
 const ADMIN_SECRET = process.env.ADMIN_SECRET || 'admin123';
 
 app.use(cors());
 app.use(express.json());
 app.use(express.static(path.join(__dirname)));
 
-const STICKER_UNLOCKS = [
-  { level: 1, icon: '✨' }, { level: 1, icon: '🔥' },
-  { level: 2, icon: '🌙' }, { level: 3, icon: '⚔️' },
-  { level: 4, icon: '🔮' }, { level: 5, icon: '👑' },
-  { level: 6, icon: '🐉' }, { level: 8, icon: '💎' }
-];
+// ================= WEBSOCKET ROOMS (/ws/:room) =================
+const rooms = new Map();
 
-const FRAME_UNLOCKS = [
-  { level: 1, id: 'none', name: 'Plain' },
-  { level: 2, id: 'emerald', name: 'Emerald Aura' },
-  { level: 3, id: 'gold', name: 'Runic Gold' },
-  { level: 5, id: 'mythic', name: 'Mythic Sovereign' }
-];
-
-function computeLevel(xp) {
-  return Math.min(10, Math.floor(xp / 100) + 1);
+function broadcastRoom(room, payload) {
+  const clients = rooms.get(room);
+  if (!clients) return;
+  const raw = JSON.stringify(payload);
+  for (const ws of clients) {
+    if (ws.readyState === 1) ws.send(raw);
+  }
 }
 
-function authMiddleware(req, res, next) {
-  const header = req.headers.authorization;
-  if (!header) return res.status(401).json({ error: 'Missing token' });
+wss.on('connection', (ws, req) => {
+  const urlPath = (req.url || '/ws/Global').split('?')[0];
+  const room = decodeURIComponent(urlPath.replace(/^\/ws\//, '') || 'Global');
+  if (!rooms.has(room)) rooms.set(room, new Set());
+  rooms.get(room).add(ws);
+
+  ws.on('message', (data) => {
+    try {
+      const parsed = JSON.parse(data.toString());
+      broadcastRoom(room, parsed);
+    } catch (_) {}
+  });
+
+  ws.on('close', () => {
+    rooms.get(room)?.delete(ws);
+  });
+});
+
+// ================= EMAIL HELPER =================
+async function sendEmail(to, subject, text) {
+  const user = process.env.SMTP_USER;
+  const pass = process.env.SMTP_PASS;
+  if (!user || !pass) return false;
   try {
-    const token = header.replace('Bearer ', '');
-    req.user = jwt.verify(token, JWT_SECRET);
+    const transporter = nodemailer.createTransport({
+      host: process.env.SMTP_HOST || 'smtp.gmail.com',
+      port: Number(process.env.SMTP_PORT || 587),
+      secure: false,
+      auth: { user, pass }
+    });
+    await transporter.sendMail({ from: user, to, subject, text });
+    return true;
+  } catch (err) {
+    console.warn('SMTP send failed:', err.message);
+    return false;
+  }
+}
+
+// ================= AUTH MIDDLEWARE =================
+function authMiddleware(req, res, next) {
+  const header = req.headers.authorization || '';
+  if (!header.startsWith('Bearer ')) return res.status(401).json({ detail: 'Missing Bearer token' });
+  try {
+    req.user = jwt.verify(header.slice(7), JWT_SECRET);
     next();
   } catch (e) {
-    res.status(401).json({ error: 'Invalid token' });
+    res.status(401).json({ detail: 'Invalid or expired token' });
   }
 }
 
 function adminMiddleware(req, res, next) {
-  const key = req.headers['x-admin-key'];
-  if (key !== ADMIN_SECRET) return res.status(403).json({ error: 'Invalid Admin CMS Key' });
+  if (req.headers['x-admin-key'] !== ADMIN_SECRET) return res.status(403).json({ detail: 'Invalid Admin Key' });
   next();
 }
 
-function serializeUser(u) {
-  return {
-    id: u.id,
-    username: u.username,
-    email: u.email,
-    role: u.role,
-    country: u.country,
-    theme: u.theme,
-    xp: u.xp,
-    level: u.level,
-    activeBadge: u.active_badge,
-    activeFrame: u.active_frame,
-    unlockedStickers: JSON.parse(u.unlocked_stickers || '["✨","🔥"]'),
-    unlockedFrames: JSON.parse(u.unlocked_frames || '["none"]')
-  };
+function createToken(uid, username) {
+  return jwt.sign({ uid, username }, JWT_SECRET, { expiresIn: '30d' });
 }
 
+// ================= HEALTH & STATIC =================
+app.get('/health', (req, res) => res.json({ status: 'ok', backend: 'node-express' }));
+
 // ================= AUTH ROUTES =================
-app.post('/api/auth/register', (req, res) => {
-  const { username, email, password, role, country } = req.body;
-  if (!username || !password) return res.status(400).json({ error: 'Username and password required' });
+app.post('/api/auth/register', async (req, res) => {
+  const { username, email, password } = req.body;
+  if (!username || !email || !password) return res.status(400).json({ detail: 'Username, email, and password required' });
+
+  const uid = 'u_' + crypto.randomBytes(6).toString('hex');
+  const code = String(Math.floor(100000 + Math.random() * 900000));
+  const hash = bcrypt.hashSync(password, 10);
+
   try {
-    const hash = bcrypt.hashSync(password, 10);
-    const info = db.prepare(
-      'INSERT INTO users (username, email, password_hash, role, country, last_active_at) VALUES (?, ?, ?, ?, ?, ?)'
-    ).run(username.trim(), email || null, hash, role || 'Wanderer', country || 'India', Date.now());
-    const user = db.prepare('SELECT * FROM users WHERE id = ?').get(info.lastInsertRowid);
-    const token = jwt.sign({ id: user.id, username: user.username }, JWT_SECRET, { expiresIn: '30d' });
-    res.json({ token, user: serializeUser(user) });
-  } catch (err) {
-    res.status(400).json({ error: 'Username or email already exists' });
+    db.prepare(
+      'INSERT INTO users (uid, username, email, password_hash, verification_code) VALUES (?, ?, ?, ?, ?)'
+    ).run(uid, username.trim(), email.toLowerCase().trim(), hash, code);
+  } catch (e) {
+    return res.status(400).json({ detail: 'Username or email already exists' });
   }
+
+  await sendEmail(email, 'Verify your C9nnect Account', `Welcome ${username}!\n\nYour 6-digit verification code is: ${code}`);
+  res.json({ token: createToken(uid, username.trim()), uid, username: username.trim(), email_verified: false });
 });
 
 app.post('/api/auth/login', (req, res) => {
-  const { identifier, password } = req.body;
-  const user = db.prepare('SELECT * FROM users WHERE username = ? OR email = ?').get(identifier, identifier);
-  if (!user || !bcrypt.compareSync(password, user.password_hash)) {
-    return res.status(401).json({ error: 'Invalid credentials' });
+  const { email, password } = req.body;
+  const user = db.prepare('SELECT * FROM users WHERE email = ?').get((email || '').toLowerCase().trim());
+  if (!user || !bcrypt.compareSync(password || '', user.password_hash)) {
+    return res.status(401).json({ detail: 'Invalid email or password' });
   }
-  const token = jwt.sign({ id: user.id, username: user.username }, JWT_SECRET, { expiresIn: '30d' });
-  res.json({ token, user: serializeUser(user) });
+  res.json({
+    token: createToken(user.uid, user.username),
+    uid: user.uid,
+    username: user.username,
+    email_verified: Boolean(user.email_verified),
+    honor: user.honor,
+    daily_honor: user.daily_honor,
+    xp: user.xp,
+    level: user.level,
+    bio: user.bio,
+    affinity: user.affinity,
+    theme: user.theme,
+    equipped_sticker: user.equipped_sticker,
+    equipped_deco: user.equipped_deco
+  });
 });
 
-app.post('/api/auth/guest', (req, res) => {
-  const guestName = 'Wanderer' + Math.floor(1000 + Math.random() * 9000);
-  const hash = bcrypt.hashSync('guest_' + Date.now(), 8);
-  const info = db.prepare(
-    'INSERT INTO users (username, password_hash, last_active_at) VALUES (?, ?, ?)'
-  ).run(guestName, hash, Date.now());
-  const user = db.prepare('SELECT * FROM users WHERE id = ?').get(info.lastInsertRowid);
-  const token = jwt.sign({ id: user.id, username: user.username }, JWT_SECRET, { expiresIn: '30d' });
-  res.json({ token, user: serializeUser(user) });
+app.post('/api/auth/verify', (req, res) => {
+  const { email, code } = req.body;
+  const user = db.prepare('SELECT id, verification_code FROM users WHERE email = ?').get((email || '').toLowerCase().trim());
+  if (!user || user.verification_code !== String(code || '').trim()) {
+    return res.status(400).json({ detail: 'Invalid verification code' });
+  }
+  db.prepare('UPDATE users SET email_verified = 1 WHERE id = ?').run(user.id);
+  res.json({ ok: true, email_verified: true });
 });
 
-app.get('/api/auth/me', authMiddleware, (req, res) => {
-  const user = db.prepare('SELECT * FROM users WHERE id = ?').get(req.user.id);
-  if (!user) return res.status(404).json({ error: 'User not found' });
-  res.json({ user: serializeUser(user) });
+app.post('/api/auth/reset-password', async (req, res) => {
+  const email = (req.body.email || '').toLowerCase().trim();
+  const token = crypto.randomBytes(4).toString('hex').toUpperCase();
+  db.prepare('UPDATE users SET reset_token = ? WHERE email = ?').run(token, email);
+  await sendEmail(email, 'C9nnect Password Reset', `Your password reset token is: ${token}`);
+  res.json({ ok: true });
 });
 
-app.patch('/api/user/profile', authMiddleware, (req, res) => {
-  const { username, role, country, theme, activeBadge, activeFrame } = req.body;
-  const current = db.prepare('SELECT * FROM users WHERE id = ?').get(req.user.id);
-  if (!current) return res.status(404).json({ error: 'User not found' });
-  db.prepare(`
-    UPDATE users SET username = ?, role = ?, country = ?, theme = ?, active_badge = ?, active_frame = ?
-    WHERE id = ?
-  `).run(
-    username || current.username,
-    role || current.role,
-    country || current.country,
-    theme || current.theme,
-    activeBadge !== undefined ? activeBadge : current.active_badge,
-    activeFrame || current.active_frame,
-    req.user.id
+app.post('/api/auth/reset-password/confirm', (req, res) => {
+  const { email, token, new_password } = req.body;
+  const user = db.prepare('SELECT id, reset_token FROM users WHERE email = ?').get((email || '').toLowerCase().trim());
+  if (!user || !user.reset_token || user.reset_token !== String(token || '').trim().toUpperCase()) {
+    return res.status(400).json({ detail: 'Invalid reset token' });
+  }
+  const newHash = bcrypt.hashSync(new_password, 10);
+  db.prepare('UPDATE users SET password_hash = ?, reset_token = NULL WHERE id = ?').run(newHash, user.id);
+  res.json({ ok: true });
+});
+
+// ================= USERS, PROFILE, XP & FRIENDS =================
+app.get('/api/users', (req, res) => {
+  const rows = db.prepare(
+    'SELECT uid, username, honor, level, xp, equipped_sticker, equipped_deco FROM users ORDER BY honor DESC LIMIT 50'
+  ).all();
+  res.json(rows);
+});
+
+app.patch('/api/users/me', authMiddleware, (req, res) => {
+  const { username, affinity, bio, theme, equipped_sticker, equipped_deco } = req.body;
+  const cur = db.prepare('SELECT * FROM users WHERE uid = ?').get(req.user.uid);
+  if (!cur) return res.status(404).json({ detail: 'User not found' });
+  db.prepare(
+    'UPDATE users SET username = ?, affinity = ?, bio = ?, theme = ?, equipped_sticker = ?, equipped_deco = ? WHERE uid = ?'
+  ).run(
+    username || cur.username,
+    affinity || cur.affinity,
+    bio !== undefined ? bio : cur.bio,
+    theme || cur.theme,
+    equipped_sticker || cur.equipped_sticker,
+    equipped_deco || cur.equipped_deco,
+    req.user.uid
   );
-  const updated = db.prepare('SELECT * FROM users WHERE id = ?').get(req.user.id);
-  res.json({ user: serializeUser(updated) });
+  res.json({ ok: true });
 });
 
-// ================= ANTI-IDLE XP ENGINE =================
-app.post('/api/user/xp', authMiddleware, (req, res) => {
-  const { amount = 10, activePing = true } = req.body;
-  const user = db.prepare('SELECT * FROM users WHERE id = ?').get(req.user.id);
-  if (!user) return res.status(404).json({ error: 'User not found' });
-
-  const now = Date.now();
-  // Anti-idle server verification: reject passive farming if no genuine interaction
-  if (!activePing) {
-    return res.json({ user: serializeUser(user), gained: 0, idleBlocked: true });
-  }
-
-  const safeGain = Math.min(50, Math.max(1, Number(amount) || 5));
-  const newXp = user.xp + safeGain;
-  const newLevel = computeLevel(newXp);
-
-  const stickers = STICKER_UNLOCKS.filter(s => s.level <= newLevel).map(s => s.icon);
-  const frames = FRAME_UNLOCKS.filter(f => f.level <= newLevel).map(f => f.id);
-
-  db.prepare(`
-    UPDATE users SET xp = ?, level = ?, unlocked_stickers = ?, unlocked_frames = ?, last_active_at = ?
-    WHERE id = ?
-  `).run(newXp, newLevel, JSON.stringify(stickers), JSON.stringify(frames), now, req.user.id);
-
-  const updated = db.prepare('SELECT * FROM users WHERE id = ?').get(req.user.id);
-  res.json({ user: serializeUser(updated), gained: safeGain, leveledUp: newLevel > user.level });
+app.post('/api/users/xp', authMiddleware, (req, res) => {
+  const gain = Math.min(50, Math.max(1, Number(req.body.amount) || 5));
+  const row = db.prepare('SELECT xp FROM users WHERE uid = ?').get(req.user.uid);
+  if (!row) return res.status(404).json({ detail: 'User not found' });
+  const newXp = row.xp + gain;
+  const newLevel = Math.floor(newXp / 100) + 1;
+  db.prepare('UPDATE users SET xp = ?, level = ? WHERE uid = ?').run(newXp, newLevel, req.user.uid);
+  res.json({ xp: newXp, level: newLevel });
 });
 
-// ================= CONFESSIONS & REPLIES =================
+app.post('/api/users/honor', authMiddleware, (req, res) => {
+  const row = db.prepare('SELECT honor, daily_honor, xp FROM users WHERE uid = ?').get(req.user.uid);
+  if (!row) return res.status(404).json({ detail: 'User not found' });
+  const remaining = Math.max(0, 500 - row.daily_honor);
+  const gained = Math.min(Math.max(0, Number(req.body.amount) || 10), remaining);
+  const newHonor = row.honor + gained;
+  const newDaily = row.daily_honor + gained;
+  const newXp = row.xp + gained;
+  const newLevel = Math.floor(newXp / 100) + 1;
+  db.prepare('UPDATE users SET honor = ?, daily_honor = ?, xp = ?, level = ? WHERE uid = ?')
+    .run(newHonor, newDaily, newXp, newLevel, req.user.uid);
+  res.json({ honor: newHonor, daily_honor: newDaily, xp: newXp, level: newLevel });
+});
+
+app.get('/api/friends', authMiddleware, (req, res) => {
+  const uid = req.user.uid;
+  const rows = db.prepare(`
+    SELECT u.uid, u.username, u.honor, u.level, u.equipped_sticker, f.status, f.requester_uid
+    FROM friends f
+    JOIN users u ON (u.uid = CASE WHEN f.requester_uid = ? THEN f.addressee_uid ELSE f.requester_uid END)
+    WHERE f.requester_uid = ? OR f.addressee_uid = ?
+  `).all(uid, uid, uid);
+  res.json(rows);
+});
+
+app.post('/api/friends/request', authMiddleware, (req, res) => {
+  const target = db.prepare('SELECT uid, username FROM users WHERE LOWER(username) = LOWER(?)').get((req.body.username || '').trim());
+  if (!target) return res.status(404).json({ detail: 'Player not found' });
+  if (target.uid === req.user.uid) return res.status(400).json({ detail: 'Cannot add yourself' });
+  db.prepare('INSERT OR IGNORE INTO friends (requester_uid, addressee_uid, status) VALUES (?, ?, ?)').run(req.user.uid, target.uid, 'pending');
+  res.json({ ok: true, friend: target.username });
+});
+
+app.post('/api/friends/accept', authMiddleware, (req, res) => {
+  db.prepare('UPDATE friends SET status = ? WHERE requester_uid = ? AND addressee_uid = ?').run('accepted', req.body.requester_uid, req.user.uid);
+  res.json({ ok: true });
+});
+
+// ================= CONFESSIONS =================
 app.get('/api/confessions', (req, res) => {
-  const rows = db.prepare('SELECT * FROM confessions ORDER BY id DESC LIMIT 50').all();
-  const replyStmt = db.prepare('SELECT * FROM replies WHERE confession_id = ? ORDER BY id ASC');
-  const data = rows.map(r => ({ ...r, replies: replyStmt.all(r.id) }));
-  res.json(data);
+  const rows = db.prepare('SELECT * FROM confessions ORDER BY id DESC LIMIT 40').all();
+  const repStmt = db.prepare('SELECT author_name, text, created_at FROM replies WHERE confession_id = ? ORDER BY id ASC');
+  res.json(rows.map(r => ({ ...r, replies: repStmt.all(r.id) })));
 });
 
 app.post('/api/confessions', (req, res) => {
-  const { authorName = 'Anonymous', text, mood = 'Reflective' } = req.body;
-  if (!text || !text.trim()) return res.status(400).json({ error: 'Confession text required' });
-  const info = db.prepare('INSERT INTO confessions (author_name, text, mood) VALUES (?, ?, ?)').run(
-    authorName.slice(0, 32), text.trim().slice(0, 400), mood
-  );
+  const { author_name = 'Anonymous', sticker = '📜', mood = 'Reflective', text } = req.body;
+  if (!text || !text.trim()) return res.status(400).json({ detail: 'Confession text required' });
+  const info = db.prepare('INSERT INTO confessions (author_name, sticker, mood, text) VALUES (?, ?, ?, ?)')
+    .run(author_name.slice(0, 64), sticker.slice(0, 8), mood.slice(0, 32), text.trim());
   const created = { ...db.prepare('SELECT * FROM confessions WHERE id = ?').get(info.lastInsertRowid), replies: [] };
-  io.emit('confession:new', created);
+  broadcastRoom('global', { type: 'confession:new', data: created });
   res.json(created);
 });
 
 app.post('/api/confessions/:id/like', (req, res) => {
   db.prepare('UPDATE confessions SET likes = likes + 1 WHERE id = ?').run(req.params.id);
-  const updated = db.prepare('SELECT * FROM confessions WHERE id = ?').get(req.params.id);
-  res.json(updated);
+  res.json({ ok: true });
 });
 
 app.post('/api/confessions/:id/replies', (req, res) => {
-  const { authorName = 'Anonymous', text } = req.body;
-  if (!text || !text.trim()) return res.status(400).json({ error: 'Reply text required' });
-  const info = db.prepare('INSERT INTO replies (confession_id, author_name, text) VALUES (?, ?, ?)').run(
-    req.params.id, authorName.slice(0, 32), text.trim().slice(0, 240)
-  );
-  const reply = db.prepare('SELECT * FROM replies WHERE id = ?').get(info.lastInsertRowid);
-  res.json(reply);
+  const { author_name = 'Anonymous', text } = req.body;
+  if (!text || !text.trim()) return res.status(400).json({ detail: 'Reply text required' });
+  db.prepare('INSERT INTO replies (confession_id, author_name, text) VALUES (?, ?, ?)').run(req.params.id, author_name.slice(0, 64), text.trim());
+  res.json({ ok: true });
 });
 
-// ================= FATE MATCHMAKING & MESSAGES =================
-const PEERS = [
-  { key: 'clara', name: 'Clara', role: 'Artist 🎨', realm: 'Anime & Art', compatibility: 96, bio: "Anime enthusiast & digital illustrator looking for creative souls." },
-  { key: 'kael', name: 'Kael', role: 'Shadow Rogue ⚔️', realm: 'Gaming & Raids', compatibility: 92, bio: "Clearing dungeon raids every weekend. Need a reliable strategist." },
-  { key: 'lyra', name: 'Lyra', role: 'Synth Bard 🎧', realm: 'Music & Lofi', compatibility: 94, bio: "Mixing late-night lofi beats and dungeon ambient synths." },
-  { key: 'orion', name: 'Orion', role: 'Stargazer 🔮', realm: 'Deep Talks', compatibility: 89, bio: "Let's talk philosophy, manhwa lore, and midnight confessions." }
-];
-
-app.get('/api/fate/roll', (req, res) => {
-  const realm = req.query.realm;
-  const pool = realm && realm !== 'All Realms' ? PEERS.filter(p => p.realm === realm) : PEERS;
-  const match = pool[Math.floor(Math.random() * pool.length)] || PEERS[0];
-  res.json(match);
-});
-
-app.get('/api/messages/:peerKey', authMiddleware, (req, res) => {
-  const rows = db.prepare('SELECT * FROM messages WHERE sender_id = ? AND peer_key = ? ORDER BY id ASC').all(req.user.id, req.params.peerKey);
+// ================= MESSAGES =================
+app.get('/api/messages/:target', (req, res) => {
+  const rows = db.prepare('SELECT * FROM messages WHERE target = ? ORDER BY id ASC LIMIT 80').all(req.params.target);
   res.json(rows);
 });
 
 app.post('/api/messages', authMiddleware, (req, res) => {
-  const { peerKey, text } = req.body;
-  const user = db.prepare('SELECT * FROM users WHERE id = ?').get(req.user.id);
-  if (!peerKey || !text) return res.status(400).json({ error: 'Missing fields' });
-  db.prepare('INSERT INTO messages (sender_id, peer_key, sender_name, text) VALUES (?, ?, ?, ?)').run(
-    user.id, peerKey, user.username, text.trim()
-  );
-  // Simulated peer reply stored in SQL
-  const peer = PEERS.find(p => p.key === peerKey) || PEERS[0];
-  const replyText = `${peer.name}: Resonance received! Love talking about ${peer.realm.toLowerCase()} with you.`;
-  db.prepare('INSERT INTO messages (sender_id, peer_key, sender_name, text) VALUES (?, ?, ?, ?)').run(
-    user.id, peerKey, peer.name, replyText
-  );
-  const rows = db.prepare('SELECT * FROM messages WHERE sender_id = ? AND peer_key = ? ORDER BY id ASC').all(user.id, peerKey);
-  res.json(rows);
+  const { target, text } = req.body;
+  if (!target || !text || !text.trim()) return res.status(400).json({ detail: 'Target and text required' });
+  db.prepare('INSERT INTO messages (sender, target, text) VALUES (?, ?, ?)').run(req.user.username, target, text.trim());
+  const payload = { type: 'message:new', sender: req.user.username, target, text: text.trim() };
+  broadcastRoom(target, payload);
+  res.json(payload);
 });
 
-// ================= GUILD RAID STATE =================
-app.get('/api/guild', (req, res) => {
-  const guild = db.prepare('SELECT * FROM guild_state WHERE id = 1').get();
-  res.json(guild);
-});
+// ================= GUILD & CMS =================
+app.get('/api/guild', (req, res) => res.json(db.prepare('SELECT * FROM guild_state WHERE id = 1').get()));
 
 app.post('/api/guild/attack', (req, res) => {
-  const damage = Math.min(350, Math.max(25, Number(req.body.damage) || 75));
-  let guild = db.prepare('SELECT * FROM guild_state WHERE id = 1').get();
-  let nextHp = guild.boss_hp - damage;
-  let nextHonor = guild.honor_points + Math.round(damage / 3);
-  if (nextHp <= 0) {
-    nextHp = guild.boss_max_hp;
-    nextHonor += 500;
+  const dmg = Math.min(350, Math.max(20, Number(req.body.amount) || 45));
+  const g = db.prepare('SELECT * FROM guild_state WHERE id = 1').get();
+  let newHp = g.boss_hp - dmg;
+  let newTier = g.boss_tier;
+  let newMax = g.boss_max_hp;
+  if (newHp <= 0) {
+    newTier += 1;
+    newMax = 500 + (newTier - 1) * 300;
+    newHp = newMax;
   }
-  db.prepare('UPDATE guild_state SET boss_hp = ?, honor_points = ? WHERE id = 1').run(nextHp, nextHonor);
-  guild = db.prepare('SELECT * FROM guild_state WHERE id = 1').get();
-  io.emit('guild:update', guild);
-  res.json(guild);
+  db.prepare('UPDATE guild_state SET boss_hp = ?, boss_tier = ?, boss_max_hp = ? WHERE id = 1').run(newHp, newTier, newMax);
+  const updated = db.prepare('SELECT * FROM guild_state WHERE id = 1').get();
+  broadcastRoom('global', { type: 'guild:update', data: updated });
+  res.json(updated);
 });
 
-// ================= PUBLIC & ADMIN CMS ROUTES =================
 app.get('/api/cms', (req, res) => {
   const rows = db.prepare('SELECT * FROM cms_settings').all();
-  const map = {};
-  rows.forEach(r => { map[r.key] = r.value; });
+  const map = Object.fromEntries(rows.map(r => [r.key, r.value]));
   res.json({
     announcement: map.announcement || '',
     pollQuestion: map.poll_question || '',
@@ -271,28 +318,11 @@ app.get('/api/cms', (req, res) => {
 });
 
 app.post('/api/cms/poll/vote', (req, res) => {
-  const { index } = req.body;
   const row = db.prepare('SELECT value FROM cms_settings WHERE key = ?').get('poll_options');
-  const options = JSON.parse(row.value || '[]');
-  if (options[index]) options[index].votes += 1;
-  db.prepare('UPDATE cms_settings SET value = ? WHERE key = ?').run(JSON.stringify(options), 'poll_options');
-  io.emit('cms:poll', options);
-  res.json(options);
-});
-
-app.post('/api/admin/cms', adminMiddleware, (req, res) => {
-  const { announcement, pollQuestion, pollOptions } = req.body;
-  if (announcement !== undefined) {
-    db.prepare('INSERT OR REPLACE INTO cms_settings (key, value) VALUES (?, ?)').run('announcement', announcement);
-  }
-  if (pollQuestion !== undefined) {
-    db.prepare('INSERT OR REPLACE INTO cms_settings (key, value) VALUES (?, ?)').run('poll_question', pollQuestion);
-  }
-  if (Array.isArray(pollOptions)) {
-    db.prepare('INSERT OR REPLACE INTO cms_settings (key, value) VALUES (?, ?)').run('poll_options', JSON.stringify(pollOptions));
-  }
-  io.emit('cms:refresh');
-  res.json({ ok: true });
+  const opts = JSON.parse(row?.value || '[]');
+  if (opts[req.body.index]) opts[req.body.index].votes += 1;
+  db.prepare('UPDATE cms_settings SET value = ? WHERE key = ?').run(JSON.stringify(opts), 'poll_options');
+  res.json(opts);
 });
 
 app.delete('/api/admin/confessions/:id', adminMiddleware, (req, res) => {
@@ -300,28 +330,6 @@ app.delete('/api/admin/confessions/:id', adminMiddleware, (req, res) => {
   res.json({ ok: true });
 });
 
-app.get('/api/admin/users', adminMiddleware, (req, res) => {
-  const users = db.prepare('SELECT id, username, email, role, theme, xp, level, created_at FROM users ORDER BY xp DESC LIMIT 50').all();
-  res.json(users);
-});
-
-// ================= REAL-TIME SOCKET.IO TAVERN =================
-io.on('connection', (socket) => {
-  socket.on('tavern:chat', (payload) => {
-    io.emit('tavern:chat', {
-      user: String(payload.user || 'Wanderer').slice(0, 28),
-      badge: String(payload.badge || '').slice(0, 4),
-      text: String(payload.text || '').slice(0, 240),
-      ts: Date.now()
-    });
-  });
-
-  socket.on('tavern:reaction', (emoji) => {
-    io.emit('tavern:reaction', String(emoji || '🔥').slice(0, 4));
-  });
-});
-
 server.listen(PORT, () => {
-  console.log(`AuraConnect Full-Stack Server running at http://localhost:${PORT}`);
-  console.log(`Admin CMS Panel available at http://localhost:${PORT}/admin.html`);
+  console.log(`C9nnect Node.js Server running on port ${PORT}`);
 });

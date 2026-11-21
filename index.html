@@ -223,20 +223,23 @@
   <!-- ================= STICKY TOP HEADER ================= -->
   <header class="sticky top-0 z-40 px-2 sm:px-4 pt-2.5 pb-2 w-full">
     <div class="max-w-6xl mx-auto flex flex-col gap-2">
-      <!-- Row 1: Navigation Tabs + Auth/Profile Transition + Allies + Themes -->
+      <!-- Row 1: Brand + Convenient Desktop Tabs + Auth/Profile Cluster -->
       <div class="flex items-center justify-between gap-2">
-        <nav class="glass-nav px-2 sm:px-3 py-1.5 rounded-full flex items-center space-x-1.5 shadow-lg overflow-x-auto no-scrollbar max-w-full flex-1 md:flex-initial">
-          <span class="px-2 font-extrabold text-xs tracking-tight text-amber-400 shrink-0">C9NNECT</span>
-          <div class="h-4 w-px bg-white/15 shrink-0"></div>
-          <button type="button" onclick="switchTab('home')" id="nav-home" class="nav-btn nav-active px-3 py-1.5 rounded-full text-xs font-semibold transition shrink-0">Sanctum</button>
-          <button type="button" onclick="switchTab('dice')" id="nav-dice" class="nav-btn px-3 py-1.5 rounded-full text-xs font-medium text-slate-300 transition shrink-0">Fate &amp; DMs</button>
-          <button type="button" onclick="switchTab('live')" id="nav-live" class="nav-btn px-3 py-1.5 rounded-full text-xs font-medium text-slate-300 transition shrink-0">Tavern</button>
-          <button type="button" onclick="switchTab('confessions')" id="nav-confessions" class="nav-btn px-3 py-1.5 rounded-full text-xs font-medium text-slate-300 transition shrink-0">Scrolls</button>
-          <button type="button" onclick="switchTab('profile')" id="nav-profile" class="nav-btn px-3 py-1.5 rounded-full text-xs font-medium text-slate-300 transition shrink-0">Hero</button>
-          <button type="button" onclick="switchTab('club')" id="nav-club" class="nav-btn px-3 py-1.5 rounded-full text-xs font-medium text-slate-300 transition shrink-0">Guild Arena</button>
-          <button type="button" onclick="openSearchModal()" class="p-2 rounded-full text-slate-300 hover:bg-white/10 transition shrink-0" title="Search Realm">
+        <div class="glass-nav px-3 py-1.5 rounded-full flex items-center space-x-2 shadow-lg">
+          <span class="font-extrabold text-xs sm:text-sm tracking-tight text-amber-400 shrink-0">C9NNECT</span>
+          <button type="button" onclick="openSearchModal()" class="p-1.5 rounded-full text-slate-300 hover:bg-white/10 transition shrink-0" title="Search Realm">
             <i data-lucide="search" class="w-4 h-4"></i>
           </button>
+        </div>
+
+        <!-- Desktop Tabs: Spacious, zero-scroll, easy-to-click pills -->
+        <nav class="hidden md:flex glass-nav px-2 py-1.5 rounded-full items-center space-x-1 shadow-lg">
+          <button type="button" onclick="switchTab('home')" data-tab-id="home" class="nav-btn nav-active px-4 py-2 rounded-full text-xs font-semibold transition cursor-pointer">Sanctum</button>
+          <button type="button" onclick="switchTab('dice')" data-tab-id="dice" class="nav-btn px-4 py-2 rounded-full text-xs font-medium text-slate-300 hover:text-white hover:bg-white/10 transition cursor-pointer">Fate &amp; DMs</button>
+          <button type="button" onclick="switchTab('live')" data-tab-id="live" class="nav-btn px-4 py-2 rounded-full text-xs font-medium text-slate-300 hover:text-white hover:bg-white/10 transition cursor-pointer">Tavern</button>
+          <button type="button" onclick="switchTab('confessions')" data-tab-id="confessions" class="nav-btn px-4 py-2 rounded-full text-xs font-medium text-slate-300 hover:text-white hover:bg-white/10 transition cursor-pointer">Scrolls</button>
+          <button type="button" onclick="switchTab('profile')" data-tab-id="profile" class="nav-btn px-4 py-2 rounded-full text-xs font-medium text-slate-300 hover:text-white hover:bg-white/10 transition cursor-pointer">Hero</button>
+          <button type="button" onclick="switchTab('club')" data-tab-id="club" class="nav-btn px-4 py-2 rounded-full text-xs font-medium text-slate-300 hover:text-white hover:bg-white/10 transition cursor-pointer">Guild Arena</button>
         </nav>
 
         <!-- Right Action Cluster: Dynamic Sign In -> Profile Pill Transition -->
@@ -271,6 +274,16 @@
           </button>
         </div>
       </div>
+
+      <!-- Mobile / Tablet Tabs: Full-width 3x2 grid, zero horizontal scroll -->
+      <nav class="md:hidden grid grid-cols-3 gap-1.5 glass-nav p-1.5 rounded-2xl shadow-lg">
+        <button type="button" onclick="switchTab('home')" data-tab-id="home" class="nav-btn nav-active py-2 px-2 rounded-xl text-xs font-semibold text-center transition cursor-pointer">Sanctum</button>
+        <button type="button" onclick="switchTab('dice')" data-tab-id="dice" class="nav-btn py-2 px-2 rounded-xl text-xs font-medium text-slate-300 hover:bg-white/10 text-center transition cursor-pointer">Fate &amp; DMs</button>
+        <button type="button" onclick="switchTab('live')" data-tab-id="live" class="nav-btn py-2 px-2 rounded-xl text-xs font-medium text-slate-300 hover:bg-white/10 text-center transition cursor-pointer">Tavern</button>
+        <button type="button" onclick="switchTab('confessions')" data-tab-id="confessions" class="nav-btn py-2 px-2 rounded-xl text-xs font-medium text-slate-300 hover:bg-white/10 text-center transition cursor-pointer">Scrolls</button>
+        <button type="button" onclick="switchTab('profile')" data-tab-id="profile" class="nav-btn py-2 px-2 rounded-xl text-xs font-medium text-slate-300 hover:bg-white/10 text-center transition cursor-pointer">Hero</button>
+        <button type="button" onclick="switchTab('club')" data-tab-id="club" class="nav-btn py-2 px-2 rounded-xl text-xs font-medium text-slate-300 hover:bg-white/10 text-center transition cursor-pointer">Guild Arena</button>
+      </nav>
 
       <!-- Row 2: Live Anti-Idle XP, Rank & Firebase Status Bar -->
       <div class="glass-nav px-3 py-1.5 rounded-2xl flex items-center justify-between gap-3 text-[11px]">
@@ -1350,7 +1363,7 @@
       $('tab-' + tabId)?.classList.remove('hidden');
 
       document.querySelectorAll('.nav-btn').forEach(btn => {
-        const active = btn.id === 'nav-' + tabId;
+        const active = btn.getAttribute('data-tab-id') === tabId;
         btn.classList.toggle('nav-active', active);
         btn.classList.toggle('bg-white/20', active);
         btn.classList.toggle('text-white', active);
@@ -2002,4 +2015,4 @@
     switchTab('home');
   </script>
 </body>
-</html>
+                                                                                              </html>

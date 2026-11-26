@@ -221,7 +221,7 @@ def require_admin(x_admin_key: Optional[str] = Header(None)):
     if x_admin_key != ADMIN_SECRET:
         raise HTTPException(status_code=403, detail="Invalid Admin Key")
 
-# ================= GEMINI AI & NON-REPEATING MULTI-API MEME ENGINE =================
+# ================= GEMINI AI & MEME ENGINE =================
 FALLBACK_MEMES: List[tuple] = [
     ("https://i.imgflip.com/1bij.jpg", "One Does Not Simply Deploy on Friday"),
     ("https://i.imgflip.com/30b1gx.jpg", "Drake Approves: Python + PostgreSQL"),
@@ -424,7 +424,8 @@ async def _refill_meme_buffer(topic: str = ""):
         for pair in fb_pool:
             MEME_BUFFER.append(pair)
 
-async def fetch_meme_token(topic: str = "") -> str:
+async def _fetch_live_meme_token(topic: str = "") -> str:
+    """Integrated helper matching the user's requested _fetch_live_meme_token signature."""
     if not topic and GEMINI_API_KEY and random.random() < 0.45:
         gem_random = await _gemini_captioned_meme("")
         if gem_random:
@@ -466,13 +467,25 @@ def format_rich_message_py(text: str) -> str:
     )
 
 async def execute_bot_command_py(raw_cmd: str, sender: str = "Wanderer", room: str = "global") -> dict:
-    """Handles /, !, and - bot commands in Python for #Global and Lounge/Tavern chat."""
-    cmd = (raw_cmd or "").strip()
-    lower = cmd.lower()
-    arg = cmd.split(" ", 1)[1].strip() if " " in cmd else ""
+    cmd_text = (raw_cmd or "").strip()
+    lower = cmd_text.lower()
+    arg = cmd_text.split(" ", 1)[1].strip() if " " in cmd_text else ""
+    channel = "#Global"
+
+    events: List[dict] = []
 
     if lower.startswith(("/meme", "!meme", "-meme")):
-        token = await fetch_meme_token(topic=arg)
+        token = await _fetch_live_meme_token(arg)
+        events.append({
+            "type": "chat_message",
+            "channel": channel,
+            "room": room,
+            "target": room,
+            "sender": "MemeBot",
+            "is_bot": True,
+            "text": token,
+            "html": format_rich_message_py(token),
+        })
         reply_text = token
     elif lower.startswith(("/ask", "!ask", "-ask", "/oracle", "!oracle", "-oracle")):
         ai_reply = await ask_gemini(
@@ -508,21 +521,25 @@ async def execute_bot_command_py(raw_cmd: str, sender: str = "Wanderer", room: s
     else:
         reply_text = "🤖 Commands available: `/meme [topic]`, `/roll`, `/rps`, `/play <song>`, `/ask <question>`, `/oracle`"
 
-    payload = {
-        "id": f"bot_{uuid.uuid4().hex[:10]}",
-        "type": "message:new",
-        "sender": "RealmBot",
-        "target": room,
-        "text": reply_text,
-        "html": format_rich_message_py(reply_text),
-        "ts": time.time(),
-    }
-    if room == "global":
-        _record_chat_message(payload)
-        await ws_manager.broadcast_all(payload)
-    else:
-        await ws_manager.broadcast(room, payload)
-    return payload
+    if not events:
+        events.append({
+            "type": "message:new",
+            "id": f"bot_{uuid.uuid4().hex[:10]}",
+            "sender": "RealmBot",
+            "target": room,
+            "text": reply_text,
+            "html": format_rich_message_py(reply_text),
+            "ts": time.time(),
+        })
+
+    for ev in events:
+        if room == "global":
+            _record_chat_message(ev)
+            await ws_manager.broadcast_all(ev)
+        else:
+            await ws_manager.broadcast(room, ev)
+
+    return events[0]
 
 def _fetch_all_lounges_sync() -> List[dict]:
     conn = get_conn()
@@ -884,7 +901,7 @@ def accept_friend_request(req: FriendAcceptReq, user=Depends(get_current_user)):
     finally:
         release_conn(conn)
 
-# ================= SCROLLS / CONFESSIONS (GLOBAL REAL-TIME SYNC) =================
+# ================= SCROLLS / CONFESSIONS =================
 @app.get("/api/confessions")
 def get_confessions():
     conn = get_conn()
@@ -949,7 +966,7 @@ async def reply_confession(cid: int, req: ReplyReq):
     })
     return {"ok": True, "reply": reply_row}
 
-# ================= GLOBAL CHAT, BOTS & REAL-TIME WEBSOCKETS =================
+# ================= GLOBAL CHAT, BOTS & WEBSOCKETS =================
 @app.get("/api/messages/{target}")
 def get_messages(target: str):
     conn = get_conn()
@@ -1140,7 +1157,7 @@ async def admin_delete_confession(cid: int):
     await ws_manager.broadcast_all({"type": "confession:delete", "id": cid})
     return {"ok": True}
 
-# ================= LOUNGES, DISCORD-STYLE ROOM MEMBERS & MUSIC SYNC =================
+# ================= LOUNGES & MUSIC SYNC =================
 @app.get("/api/lounges")
 def list_lounges():
     return _fetch_all_lounges_sync()

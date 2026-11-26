@@ -2,6 +2,7 @@ import os
 import re
 import json
 import uuid
+import time
 import random
 import secrets
 import smtplib
@@ -69,28 +70,74 @@ app.add_middleware(
 def on_startup():
     init_schema()
 
-# ================= WEBSOCKET CONNECTION MANAGER =================
+# ================= WEBSOCKET CONNECTION & PRESENCE MANAGER =================
 class ConnectionManager:
     def __init__(self):
         self.rooms: Dict[str, List[WebSocket]] = {}
+        self.socket_meta: Dict[WebSocket, dict] = {}
+        self.lounge_music_state: Dict[str, dict] = {}
 
-    async def connect(self, room: str, ws: WebSocket):
+    async def connect(self, room: str, ws: WebSocket, username: str = "Guest", lounge_id: Optional[str] = None):
         await ws.accept()
         self.rooms.setdefault(room, []).append(ws)
+        self.socket_meta[ws] = {
+            "room": room,
+            "username": username or "Guest",
+            "lounge_id": lounge_id,
+            "connected_at": time.time(),
+        }
+
+    def update_meta(self, ws: WebSocket, username: Optional[str] = None, lounge_id: Optional[str] = None):
+        meta = self.socket_meta.get(ws)
+        if not meta:
+            return
+        if username:
+            meta["username"] = username
+        if lounge_id is not None:
+            meta["lounge_id"] = lounge_id
 
     def disconnect(self, room: str, ws: WebSocket):
         if room in self.rooms and ws in self.rooms[room]:
             self.rooms[room].remove(ws)
+        return self.socket_meta.pop(ws, None)
+
+    def get_online_users(self) -> List[dict]:
+        seen = {}
+        for meta in self.socket_meta.values():
+            uname = meta.get("username") or "Guest"
+            seen[uname] = {
+                "username": uname,
+                "lounge_id": meta.get("lounge_id"),
+                "room": meta.get("room"),
+            }
+        return list(seen.values())
 
     async def broadcast(self, room: str, payload: dict):
         dead = []
-        for ws in self.rooms.get(room, []):
+        for ws in list(self.rooms.get(room, [])):
             try:
                 await ws.send_json(payload)
             except Exception:
                 dead.append(ws)
         for ws in dead:
             self.disconnect(room, ws)
+
+    async def broadcast_all(self, payload: dict):
+        all_sockets = set()
+        for sockets in self.rooms.values():
+            for ws in sockets:
+                all_sockets.add(ws)
+        dead = []
+        for ws in all_sockets:
+            try:
+                await ws.send_json(payload)
+            except Exception:
+                dead.append(ws)
+        for ws in dead:
+            meta = self.socket_meta.get(ws)
+            if meta and meta.get("room") in self.rooms and ws in self.rooms[meta["room"]]:
+                self.rooms[meta["room"]].remove(ws)
+            self.socket_meta.pop(ws, None)
 
 ws_manager = ConnectionManager()
 
@@ -154,7 +201,7 @@ def format_rich_message_py(text: str) -> str:
     )
 
 async def execute_bot_command_py(raw_cmd: str, sender: str = "Wanderer", room: str = "global") -> dict:
-    """Handles /, !, and - bot commands in Python for #Global and Tavern chat."""
+    """Handles /, !, and - bot commands in Python for #Global and Lounge/Tavern chat."""
     cmd = (raw_cmd or "").strip()
     lower = cmd.lower()
 
@@ -195,8 +242,36 @@ async def execute_bot_command_py(raw_cmd: str, sender: str = "Wanderer", room: s
         "text": reply_text,
         "html": format_rich_message_py(reply_text),
     }
-    await ws_manager.broadcast(room, payload)
+    if room == "global":
+        await ws_manager.broadcast_all(payload)
+    else:
+        await ws_manager.broadcast(room, payload)
     return payload
+
+def _fetch_all_lounges_sync() -> List[dict]:
+    conn = get_conn()
+    try:
+        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            cur.execute("SELECT * FROM tavern_lounges ORDER BY id ASC")
+            rows = cur.fetchall()
+            for r in rows:
+                music = ws_manager.lounge_music_state.get(r["id"])
+                if music:
+                    r["music_state"] = music
+            return rows
+    finally:
+        release_conn(conn)
+
+def _remove_member_from_all_lounges(cur, username: str):
+    cur.execute("SELECT id, members FROM tavern_lounges")
+    for other in cur.fetchall():
+        om = list(other["members"] or [])
+        if username in om:
+            om = [m for m in om if m != username]
+            cur.execute(
+                "UPDATE tavern_lounges SET members = %s::jsonb WHERE id = %s",
+                (json.dumps(om), other["id"]),
+            )
 
 # ================= SCHEMAS =================
 class RegisterReq(BaseModel):
@@ -273,6 +348,8 @@ class LoungeMusicSyncReq(BaseModel):
     video_id: str = ""
     station_idx: int = 0
     is_playing: bool = True
+    position_sec: float = 0.0
+    updated_by: str = "Host"
 
 class BotChatReq(BaseModel):
     bot_name: str
@@ -296,6 +373,14 @@ def serve_admin():
 @app.get("/health")
 def health():
     return {"status": "ok", "db_configured": bool(pg_pool)}
+
+@app.get("/api/presence")
+def get_presence():
+    return {
+        "online_users": ws_manager.get_online_users(),
+        "online_count": len(ws_manager.get_online_users()),
+        "lounges": _fetch_all_lounges_sync(),
+    }
 
 # ================= AUTH ROUTES =================
 @app.post("/api/auth/register")
@@ -518,7 +603,7 @@ def accept_friend_request(req: FriendAcceptReq, user=Depends(get_current_user)):
     finally:
         release_conn(conn)
 
-# ================= CONFESSIONS =================
+# ================= SCROLLS / CONFESSIONS (GLOBAL REAL-TIME SYNC) =================
 @app.get("/api/confessions")
 def get_confessions():
     conn = get_conn()
@@ -546,30 +631,44 @@ async def create_confession(req: ConfessionReq):
             created["replies"] = []
     finally:
         release_conn(conn)
-    await ws_manager.broadcast("global", {"type": "confession:new", "data": created})
+    await ws_manager.broadcast_all({"type": "confession:new", "data": created})
     return created
 
 @app.post("/api/confessions/{cid}/like")
-def like_confession(cid: int):
+async def like_confession(cid: int):
     conn = get_conn()
     try:
-        with conn.cursor() as cur:
-            cur.execute("UPDATE confessions SET likes = likes + 1 WHERE id = %s", (cid,))
+        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            cur.execute("UPDATE confessions SET likes = likes + 1 WHERE id = %s RETURNING id, likes", (cid,))
+            row = cur.fetchone()
     finally:
         release_conn(conn)
-    return {"ok": True}
+    if row:
+        await ws_manager.broadcast_all({"type": "confession:like", "id": row["id"], "likes": row["likes"]})
+    return {"ok": True, "id": cid, "likes": row["likes"] if row else None}
 
 @app.post("/api/confessions/{cid}/replies")
-def reply_confession(cid: int, req: ReplyReq):
+async def reply_confession(cid: int, req: ReplyReq):
+    clean_author = req.author_name[:64]
+    clean_text = req.text.strip()
     conn = get_conn()
     try:
-        with conn.cursor() as cur:
-            cur.execute("INSERT INTO confession_replies (confession_id, author_name, text) VALUES (%s, %s, %s)", (cid, req.author_name[:64], req.text.strip()))
+        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            cur.execute(
+                "INSERT INTO confession_replies (confession_id, author_name, text) VALUES (%s, %s, %s) RETURNING author_name, text, created_at",
+                (cid, clean_author, clean_text),
+            )
+            reply_row = cur.fetchone()
     finally:
         release_conn(conn)
-    return {"ok": True}
+    await ws_manager.broadcast_all({
+        "type": "confession:reply",
+        "confession_id": cid,
+        "reply": reply_row,
+    })
+    return {"ok": True, "reply": reply_row}
 
-# ================= MESSAGES, BOTS & TAVERN WEBSOCKETS =================
+# ================= GLOBAL CHAT, BOTS & REAL-TIME WEBSOCKETS =================
 @app.get("/api/messages/{target}")
 def get_messages(target: str):
     conn = get_conn()
@@ -599,7 +698,10 @@ async def post_message(req: MessageReq, user=Depends(get_current_user)):
         "text": clean_text,
         "html": format_rich_message_py(clean_text),
     }
-    await ws_manager.broadcast(req.target, payload)
+    if req.target == "global":
+        await ws_manager.broadcast_all(payload)
+    else:
+        await ws_manager.broadcast(req.target, payload)
     if clean_text.startswith(("/", "!", "-")):
         await execute_bot_command_py(clean_text, sender=user["username"], room=req.target)
     return payload
@@ -621,15 +723,41 @@ async def websocket_room(ws: WebSocket, room: str):
     try:
         while True:
             data = await ws.receive_json()
-            msg_text = str(data.get("text") or "")
+            ev_type = str(data.get("type") or "message:new")
             sender = str(data.get("sender") or "Guest")
+            msg_text = str(data.get("text") or "")
+
+            if sender and sender != "Guest":
+                ws_manager.update_meta(ws, username=sender, lounge_id=data.get("loungeId") or data.get("lounge_id"))
+
+            if ev_type == "presence:ping":
+                await ws_manager.broadcast_all({
+                    "type": "presence:sync",
+                    "online_users": ws_manager.get_online_users(),
+                    "lounges": _fetch_all_lounges_sync(),
+                })
+                continue
+
             if msg_text:
                 data["html"] = format_rich_message_py(msg_text)
-            await ws_manager.broadcast(room, data)
-            if msg_text.startswith(("/", "!", "-")):
-                await execute_bot_command_py(msg_text, sender=sender, room=room)
+                if room == "global" or str(data.get("target") or "").lower() == "global":
+                    await ws_manager.broadcast_all(data)
+                else:
+                    await ws_manager.broadcast(room, data)
+                if msg_text.startswith(("/", "!", "-")):
+                    await execute_bot_command_py(msg_text, sender=sender, room=room)
+            else:
+                if ev_type in ("lounges:refresh", "lounge:music", "presence:sync"):
+                    await ws_manager.broadcast_all(data)
+                else:
+                    await ws_manager.broadcast(room, data)
     except WebSocketDisconnect:
-        ws_manager.disconnect(room, ws)
+        meta = ws_manager.disconnect(room, ws)
+        if meta and meta.get("username") and meta["username"] != "Guest":
+            await ws_manager.broadcast_all({
+                "type": "presence:sync",
+                "online_users": ws_manager.get_online_users(),
+            })
 
 # ================= GUILD BOSS & ADMIN CMS =================
 @app.get("/api/guild")
@@ -664,7 +792,7 @@ async def attack_guild_boss(req: HonorReq):
             updated = cur.fetchone()
     finally:
         release_conn(conn)
-    await ws_manager.broadcast("global", {"type": "guild:update", "data": updated})
+    await ws_manager.broadcast_all({"type": "guild:update", "data": updated})
     return updated
 
 @app.get("/api/cms")
@@ -698,23 +826,41 @@ def vote_poll(req: PollVoteReq):
         release_conn(conn)
 
 @app.delete("/api/admin/confessions/{cid}", dependencies=[Depends(require_admin)])
-def admin_delete_confession(cid: int):
+async def admin_delete_confession(cid: int):
     conn = get_conn()
     try:
         with conn.cursor() as cur:
             cur.execute("DELETE FROM confessions WHERE id = %s", (cid,))
     finally:
         release_conn(conn)
+    await ws_manager.broadcast_all({"type": "confession:delete", "id": cid})
     return {"ok": True}
 
-# ================= LOUNGES, MUSIC SYNC, BOTS & STORIES =================
+# ================= LOUNGES, DISCORD-STYLE ROOM MEMBERS & MUSIC SYNC =================
 @app.get("/api/lounges")
 def list_lounges():
+    return _fetch_all_lounges_sync()
+
+@app.get("/api/lounges/{lounge_id}/state")
+def get_lounge_state(lounge_id: str):
     conn = get_conn()
     try:
         with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
-            cur.execute("SELECT * FROM tavern_lounges ORDER BY id ASC")
-            return cur.fetchall()
+            cur.execute("SELECT * FROM tavern_lounges WHERE id = %s", (lounge_id,))
+            row = cur.fetchone()
+            if not row:
+                raise HTTPException(status_code=404, detail="Lounge not found")
+            row["music_state"] = ws_manager.lounge_music_state.get(lounge_id, {
+                "loungeId": lounge_id,
+                "title": row.get("current_track") or "Ancient Tavern Hearth & Rain Synth",
+                "videoId": row.get("video_id") or "",
+                "stationIdx": 0,
+                "isPlaying": False,
+                "positionSec": 0.0,
+                "updatedAt": time.time(),
+            })
+            row["online_users"] = ws_manager.get_online_users()
+            return row
     finally:
         release_conn(conn)
 
@@ -725,6 +871,7 @@ async def create_custom_lounge(req: LoungeCreateReq):
     conn = get_conn()
     try:
         with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            _remove_member_from_all_lounges(cur, host)
             cur.execute(
                 """
                 INSERT INTO tavern_lounges (id, name, members, max_capacity, passcode, host_name)
@@ -735,7 +882,13 @@ async def create_custom_lounge(req: LoungeCreateReq):
             created = cur.fetchone()
     finally:
         release_conn(conn)
-    await ws_manager.broadcast("tavern", {"type": "lounges:refresh", "lounges": list_lounges()})
+    lounges = _fetch_all_lounges_sync()
+    await ws_manager.broadcast_all({
+        "type": "lounges:refresh",
+        "lounges": lounges,
+        "active_lounge": created,
+        "online_users": ws_manager.get_online_users(),
+    })
     return created
 
 @app.post("/api/lounges/join_pass")
@@ -755,12 +908,7 @@ async def join_lounge_with_pass(req: LoungeJoinPassReq):
             if uname not in members:
                 if len(members) >= row["max_capacity"]:
                     raise HTTPException(status_code=400, detail="Lounge is full (5/5)")
-                cur.execute("SELECT id, members FROM tavern_lounges")
-                for other in cur.fetchall():
-                    om = list(other["members"] or [])
-                    if uname in om:
-                        om.remove(uname)
-                        cur.execute("UPDATE tavern_lounges SET members = %s::jsonb WHERE id = %s", (json.dumps(om), other["id"]))
+                _remove_member_from_all_lounges(cur, uname)
                 members.append(uname)
                 cur.execute(
                     "UPDATE tavern_lounges SET members = %s::jsonb WHERE id = %s RETURNING *",
@@ -769,8 +917,22 @@ async def join_lounge_with_pass(req: LoungeJoinPassReq):
                 row = cur.fetchone()
     finally:
         release_conn(conn)
-    await ws_manager.broadcast("tavern", {"type": "lounges:refresh", "active_lounge": row})
-    return {"ok": True, "lounge": row}
+    for ws, meta in ws_manager.socket_meta.items():
+        if meta.get("username") == uname:
+            meta["lounge_id"] = req.lounge_id
+    music = ws_manager.lounge_music_state.get(req.lounge_id)
+    if music:
+        row["music_state"] = music
+    lounges = _fetch_all_lounges_sync()
+    await ws_manager.broadcast_all({
+        "type": "lounges:refresh",
+        "lounges": lounges,
+        "active_lounge": row,
+        "joined_user": uname,
+        "lounge_id": req.lounge_id,
+        "online_users": ws_manager.get_online_users(),
+    })
+    return {"ok": True, "lounge": row, "music_state": music}
 
 @app.post("/api/lounges/{lounge_id}/leave")
 async def leave_lounge(lounge_id: str, req: LoungeJoinPassReq):
@@ -785,7 +947,17 @@ async def leave_lounge(lounge_id: str, req: LoungeJoinPassReq):
                 cur.execute("UPDATE tavern_lounges SET members = %s::jsonb WHERE id = %s", (json.dumps(members), lounge_id))
     finally:
         release_conn(conn)
-    await ws_manager.broadcast("tavern", {"type": "lounges:refresh"})
+    for meta in ws_manager.socket_meta.values():
+        if meta.get("username") == uname and meta.get("lounge_id") == lounge_id:
+            meta["lounge_id"] = None
+    lounges = _fetch_all_lounges_sync()
+    await ws_manager.broadcast_all({
+        "type": "lounges:refresh",
+        "lounges": lounges,
+        "left_user": uname,
+        "lounge_id": lounge_id,
+        "online_users": ws_manager.get_online_users(),
+    })
     return {"ok": True}
 
 @app.post("/api/lounges/sync_music")
@@ -806,9 +978,13 @@ async def sync_lounge_music(req: LoungeMusicSyncReq):
         "videoId": req.video_id,
         "stationIdx": req.station_idx,
         "isPlaying": req.is_playing,
+        "positionSec": req.position_sec,
+        "updatedBy": req.updated_by,
+        "updatedAt": time.time(),
     }
-    await ws_manager.broadcast("tavern", payload)
-    return {"ok": True}
+    ws_manager.lounge_music_state[req.lounge_id] = payload
+    await ws_manager.broadcast_all(payload)
+    return {"ok": True, "music_state": payload}
 
 @app.post("/api/lounges/{lounge_id}/join")
 async def join_lounge(lounge_id: str, user=Depends(get_current_user)):
@@ -824,17 +1000,27 @@ async def join_lounge(lounge_id: str, user=Depends(get_current_user)):
             if uname not in members:
                 if len(members) >= room["max_capacity"]:
                     raise HTTPException(status_code=400, detail="Lounge is full (5 / 5 max)")
-                cur.execute("SELECT id, members FROM tavern_lounges")
-                for other in cur.fetchall():
-                    om = list(other["members"] or [])
-                    if uname in om:
-                        om.remove(uname)
-                        cur.execute("UPDATE tavern_lounges SET members = %s::jsonb WHERE id = %s", (json.dumps(om), other["id"]))
+                _remove_member_from_all_lounges(cur, uname)
                 members.append(uname)
-                cur.execute("UPDATE tavern_lounges SET members = %s::jsonb WHERE id = %s", (json.dumps(members), lounge_id))
-            return {"ok": True, "lounge_id": lounge_id, "members": members}
+                cur.execute(
+                    "UPDATE tavern_lounges SET members = %s::jsonb WHERE id = %s RETURNING *",
+                    (json.dumps(members), lounge_id),
+                )
+                room = cur.fetchone()
     finally:
         release_conn(conn)
+    for meta in ws_manager.socket_meta.values():
+        if meta.get("username") == uname:
+            meta["lounge_id"] = lounge_id
+    lounges = _fetch_all_lounges_sync()
+    await ws_manager.broadcast_all({
+        "type": "lounges:refresh",
+        "lounges": lounges,
+        "active_lounge": room,
+        "lounge_id": lounge_id,
+        "online_users": ws_manager.get_online_users(),
+    })
+    return {"ok": True, "lounge_id": lounge_id, "members": members}
 
 @app.get("/api/music/youtube")
 def search_youtube_music(q: str):
@@ -881,7 +1067,7 @@ def get_stories():
         release_conn(conn)
 
 @app.post("/api/stories")
-def create_story(req: StoryDropReq):
+async def create_story(req: StoryDropReq):
     conn = get_conn()
     try:
         with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
@@ -889,9 +1075,11 @@ def create_story(req: StoryDropReq):
                 "INSERT INTO status_drops (author_name, mood, text) VALUES (%s, %s, %s) RETURNING *",
                 (req.author_name[:64], req.mood[:16], req.text[:180]),
             )
-            return cur.fetchone()
+            created = cur.fetchone()
     finally:
         release_conn(conn)
+    await ws_manager.broadcast_all({"type": "story:new", "data": created})
+    return created
 
 @app.get("/api/stats/summary")
 def platform_summary():

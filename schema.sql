@@ -111,6 +111,16 @@ CREATE TABLE IF NOT EXISTS status_drops (
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
+CREATE TABLE IF NOT EXISTS lounges (
+  id VARCHAR(32) PRIMARY KEY,
+  name VARCHAR(64) NOT NULL,
+  members JSONB DEFAULT '[]'::jsonb,
+  max_capacity INT DEFAULT 5,
+  passcode TEXT DEFAULT '',
+  host_name TEXT DEFAULT 'Host',
+  current_track TEXT DEFAULT '',
+  video_id TEXT DEFAULT ''
+);
 ALTER TABLE lounges ADD COLUMN IF NOT EXISTS passcode TEXT DEFAULT '';
 ALTER TABLE lounges ADD COLUMN IF NOT EXISTS host_name TEXT DEFAULT 'Host';
 ALTER TABLE lounges ADD COLUMN IF NOT EXISTS current_track TEXT DEFAULT '';

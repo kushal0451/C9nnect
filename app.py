@@ -1,7 +1,12 @@
 import os
+import re
 import json
 import uuid
+import random
+import secrets
 import smtplib
+import urllib.request
+import urllib.parse
 from email.message import EmailMessage
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional
@@ -12,7 +17,7 @@ import psycopg2.extras
 from psycopg2 import pool
 from passlib.context import CryptContext
 from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException, Header, WebSocket, WebSocketDisconnect, Depends
+from fastapi import FastAPI, HTTPException, Header, WebSocket, WebSocketDisconnect, Depends, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, EmailStr
@@ -127,6 +132,72 @@ def require_admin(x_admin_key: Optional[str] = Header(None)):
     if x_admin_key != ADMIN_SECRET:
         raise HTTPException(status_code=403, detail="Invalid Admin Key")
 
+# ================= PYTHON RICH CHAT & BOT COMMAND ENGINE =================
+MEME_POOL = [
+    ("https://i.imgflip.com/1bij.jpg", "One Does Not Simply Deploy on Friday"),
+    ("https://i.imgflip.com/30b1gx.jpg", "Drake Approves: Python + PostgreSQL"),
+    ("https://i.imgflip.com/4/1ti1.jpg", "Coding at 3 AM With 47 Browser Tabs"),
+    ("https://i.imgflip.com/26am.jpg", "When the WebSocket Syncs on the First Try"),
+]
+
+def format_rich_message_py(text: str) -> str:
+    """Converts [MEME_IMG:url|title] tokens into HTML image cards in Python."""
+    return re.sub(
+        r"\[MEME_IMG:(https?://[^|\]]+)\|([^\]]+)\]",
+        lambda m: (
+            f'<div class="mt-2 rounded-2xl overflow-hidden border border-amber-400/40 bg-black/50 shadow-lg max-w-[260px]">'
+            f'<img src="{m.group(1)}" alt="{m.group(2)}" loading="lazy" class="w-full max-h-52 object-cover bg-slate-900" />'
+            f'<div class="px-3 py-1.5 text-[11px] font-bold text-amber-200 bg-white/5 border-t border-white/10">{m.group(2)}</div>'
+            f'</div>'
+        ),
+        text or "",
+    )
+
+async def execute_bot_command_py(raw_cmd: str, sender: str = "Wanderer", room: str = "global") -> dict:
+    """Handles /, !, and - bot commands in Python for #Global and Tavern chat."""
+    cmd = (raw_cmd or "").strip()
+    lower = cmd.lower()
+
+    if lower.startswith(("/meme", "!meme", "-meme")):
+        url, title = random.choice(MEME_POOL)
+        reply_text = f"[MEME_IMG:{url}|{title}]"
+    elif lower.startswith(("/roll", "!roll", "-roll")):
+        roll = random.randint(1, 20)
+        reply_text = f"🎲 {sender} rolled a **{roll}** (d20)!"
+    elif lower.startswith(("/rps", "!rps", "-rps")):
+        choice = random.choice(["Rock 🪨", "Paper 📄", "Scissors ✂️"])
+        reply_text = f"✊ RealmBot picks **{choice}** against {sender}!"
+    elif lower.startswith(("/play", "!play", "-play")):
+        query = cmd.split(" ", 1)[1].strip() if " " in cmd else "lofi chill beats"
+        api_key = os.getenv("YOUTUBE_API_KEY", "").strip()
+        if api_key:
+            try:
+                url = "https://www.googleapis.com/youtube/v3/search?" + urllib.parse.urlencode({
+                    "part": "snippet", "q": query, "type": "video", "videoEmbeddable": "true", "maxResults": 1, "key": api_key
+                })
+                with urllib.request.urlopen(url, timeout=6) as resp:
+                    data = json.loads(resp.read().decode("utf-8"))
+                item = data["items"][0]
+                vid = item["id"]["videoId"]
+                title = item["snippet"]["title"]
+                reply_text = f"🎵 Now Queued: **{title}** (https://youtu.be/{vid})"
+            except Exception:
+                reply_text = f"🎵 Queued tavern vibe: **{query}**"
+        else:
+            reply_text = f"🎵 Queued tavern vibe: **{query}**"
+    else:
+        reply_text = "🤖 Commands available: `/meme`, `/roll`, `/rps`, `/play <song>`"
+
+    payload = {
+        "type": "message:new",
+        "sender": "RealmBot",
+        "target": room,
+        "text": reply_text,
+        "html": format_rich_message_py(reply_text),
+    }
+    await ws_manager.broadcast(room, payload)
+    return payload
+
 # ================= SCHEMAS =================
 class RegisterReq(BaseModel):
     username: str
@@ -185,6 +256,33 @@ class HonorReq(BaseModel):
 
 class PollVoteReq(BaseModel):
     index: int
+
+class LoungeCreateReq(BaseModel):
+    name: str
+    passcode: str = ""
+    host_name: str = "Host"
+
+class LoungeJoinPassReq(BaseModel):
+    lounge_id: str
+    passcode: str = ""
+    username: str = "Guest"
+
+class LoungeMusicSyncReq(BaseModel):
+    lounge_id: str
+    title: str
+    video_id: str = ""
+    station_idx: int = 0
+    is_playing: bool = True
+
+class BotChatReq(BaseModel):
+    bot_name: str
+    bot_role: str
+    message: str
+
+class StoryDropReq(BaseModel):
+    author_name: str
+    mood: str = "⚔️"
+    text: str
 
 # ================= STATIC PAGES =================
 @app.get("/")
@@ -471,28 +569,51 @@ def reply_confession(cid: int, req: ReplyReq):
         release_conn(conn)
     return {"ok": True}
 
-# ================= MESSAGES & TAVERN WEBSOCKETS =================
+# ================= MESSAGES, BOTS & TAVERN WEBSOCKETS =================
 @app.get("/api/messages/{target}")
 def get_messages(target: str):
     conn = get_conn()
     try:
         with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
             cur.execute("SELECT * FROM messages WHERE target = %s ORDER BY id ASC LIMIT 80", (target,))
-            return cur.fetchall()
+            rows = cur.fetchall()
+            for r in rows:
+                r["html"] = format_rich_message_py(r.get("text") or "")
+            return rows
     finally:
         release_conn(conn)
 
 @app.post("/api/messages")
 async def post_message(req: MessageReq, user=Depends(get_current_user)):
+    clean_text = req.text.strip()
     conn = get_conn()
     try:
         with conn.cursor() as cur:
-            cur.execute("INSERT INTO messages (sender, target, text) VALUES (%s, %s, %s)", (user["username"], req.target, req.text.strip()))
+            cur.execute("INSERT INTO messages (sender, target, text) VALUES (%s, %s, %s)", (user["username"], req.target, clean_text))
     finally:
         release_conn(conn)
-    payload = {"type": "message:new", "sender": user["username"], "target": req.target, "text": req.text.strip()}
+    payload = {
+        "type": "message:new",
+        "sender": user["username"],
+        "target": req.target,
+        "text": clean_text,
+        "html": format_rich_message_py(clean_text),
+    }
     await ws_manager.broadcast(req.target, payload)
+    if clean_text.startswith(("/", "!", "-")):
+        await execute_bot_command_py(clean_text, sender=user["username"], room=req.target)
     return payload
+
+@app.post("/api/bots/command")
+async def run_bot_command_endpoint(payload: dict):
+    cmd = str(payload.get("command", ""))
+    sender = str(payload.get("sender", "Wanderer"))
+    room = str(payload.get("room", "global"))
+    return await execute_bot_command_py(cmd, sender=sender, room=room)
+
+@app.get("/api/chat/format")
+def format_chat_endpoint(text: str = Query("")):
+    return {"text": text, "html": format_rich_message_py(text)}
 
 @app.websocket("/ws/{room}")
 async def websocket_room(ws: WebSocket, room: str):
@@ -500,7 +621,13 @@ async def websocket_room(ws: WebSocket, room: str):
     try:
         while True:
             data = await ws.receive_json()
+            msg_text = str(data.get("text") or "")
+            sender = str(data.get("sender") or "Guest")
+            if msg_text:
+                data["html"] = format_rich_message_py(msg_text)
             await ws_manager.broadcast(room, data)
+            if msg_text.startswith(("/", "!", "-")):
+                await execute_bot_command_py(msg_text, sender=sender, room=room)
     except WebSocketDisconnect:
         ws_manager.disconnect(room, ws)
 
@@ -580,95 +707,7 @@ def admin_delete_confession(cid: int):
         release_conn(conn)
     return {"ok": True}
 
-import urllib.request
-import urllib.parse
-
-
-class LoungeCreateReq(BaseModel):
-    name: str
-    passcode: str = ""
-    host_name: str = "Host"
-
-class LoungeJoinPassReq(BaseModel):
-    lounge_id: str
-    passcode: str = ""
-
-@app.post("/api/lounges/create")
-def create_custom_lounge(req: LoungeCreateReq):
-    import secrets
-    lid = "lng_" + secrets.token_hex(4)
-    conn = get_conn()
-    try:
-        with conn.cursor() as cur:
-            cur.execute(
-                "INSERT INTO lounges (id, name, members, max_members, passcode, host_name) VALUES (%s, %s, %s, %s, %s, %s)",
-                (lid, req.name.strip()[:48] or "Private Lounge", 1, 5, req.passcode.strip()[:24], req.host_name.strip()[:32]),
-            )
-    finally:
-        release_conn(conn)
-    return {"id": lid, "name": req.name.strip() or "Private Lounge", "passcode": req.passcode.strip(), "host_name": req.host_name.strip()}
-
-@app.post("/api/lounges/join_pass")
-def join_lounge_with_pass(req: LoungeJoinPassReq):
-    conn = get_conn()
-    try:
-        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
-            cur.execute("SELECT * FROM lounges WHERE id = %s", (req.lounge_id,))
-            row = cur.fetchone()
-            if not row:
-                raise HTTPException(status_code=404, detail="Lounge not found")
-            expected = (row.get("passcode") or "").strip()
-            if expected and expected != req.passcode.strip():
-                raise HTTPException(status_code=403, detail="Invalid lounge passcode")
-            cur.execute("UPDATE lounges SET members = LEAST(max_members, members + 1) WHERE id = %s", (req.lounge_id,))
-            return {"ok": True, "lounge": row}
-    finally:
-        release_conn(conn)
-
-@app.get("/api/music/youtube")
-def search_youtube_music(q: str):
-    api_key = os.getenv("YOUTUBE_API_KEY", "").strip()
-    if not api_key:
-        raise HTTPException(status_code=404, detail="YOUTUBE_API_KEY not configured")
-    url = "https://www.googleapis.com/youtube/v3/search?" + urllib.parse.urlencode({
-        "part": "snippet", "q": q, "type": "video", "videoEmbeddable": "true", "maxResults": 1, "key": api_key
-    })
-    with urllib.request.urlopen(url, timeout=6) as resp:
-        data = json.loads(resp.read().decode("utf-8"))
-    items = data.get("items", [])
-    if not items:
-        raise HTTPException(status_code=404, detail="No YouTube track found")
-    item = items[0]
-    return {
-        "videoId": item["id"]["videoId"],
-        "title": item["snippet"]["title"],
-        "channel": item["snippet"]["channelTitle"]
-    }
-
-class BotChatReq(BaseModel):
-    bot_name: str
-    bot_role: str
-    message: str
-
-@app.post("/api/bots/chat")
-def bot_ai_chat(req: BotChatReq):
-    api_key = os.getenv("GEMINI_API_KEY", "").strip()
-    if not api_key:
-        raise HTTPException(status_code=404, detail="GEMINI_API_KEY not configured")
-    url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=" + urllib.parse.quote(api_key)
-    prompt = f"You are {req.bot_name}, a friendly {req.bot_role} inside the C9nnect social & gaming platform. Reply in 1-2 short, fun sentences to: {req.message}"
-    body = json.dumps({"contents": [{"parts": [{"text": prompt}]}]}).encode("utf-8")
-    r = urllib.request.Request(url, data=body, headers={"Content-Type": "application/json"}, method="POST")
-    with urllib.request.urlopen(r, timeout=8) as resp:
-        data = json.loads(resp.read().decode("utf-8"))
-    reply = data["candidates"][0]["content"]["parts"][0]["text"].strip()
-    return {"reply": reply}
-
-class StoryDropReq(BaseModel):
-    author_name: str
-    mood: str = "⚔️"
-    text: str
-
+# ================= LOUNGES, MUSIC SYNC, BOTS & STORIES =================
 @app.get("/api/lounges")
 def list_lounges():
     conn = get_conn()
@@ -678,6 +717,98 @@ def list_lounges():
             return cur.fetchall()
     finally:
         release_conn(conn)
+
+@app.post("/api/lounges/create")
+async def create_custom_lounge(req: LoungeCreateReq):
+    lid = "lng_" + secrets.token_hex(4)
+    host = req.host_name.strip()[:32] or "Host"
+    conn = get_conn()
+    try:
+        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            cur.execute(
+                """
+                INSERT INTO tavern_lounges (id, name, members, max_capacity, passcode, host_name)
+                VALUES (%s, %s, %s::jsonb, %s, %s, %s) RETURNING *
+                """,
+                (lid, req.name.strip()[:48] or "Private Lounge", json.dumps([host]), 5, req.passcode.strip()[:24], host),
+            )
+            created = cur.fetchone()
+    finally:
+        release_conn(conn)
+    await ws_manager.broadcast("tavern", {"type": "lounges:refresh", "lounges": list_lounges()})
+    return created
+
+@app.post("/api/lounges/join_pass")
+async def join_lounge_with_pass(req: LoungeJoinPassReq):
+    uname = req.username.strip()[:32] or "Guest"
+    conn = get_conn()
+    try:
+        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            cur.execute("SELECT * FROM tavern_lounges WHERE id = %s", (req.lounge_id,))
+            row = cur.fetchone()
+            if not row:
+                raise HTTPException(status_code=404, detail="Lounge not found")
+            expected = (row.get("passcode") or "").strip()
+            if expected and expected != req.passcode.strip():
+                raise HTTPException(status_code=403, detail="Invalid lounge passcode")
+            members = list(row["members"] or [])
+            if uname not in members:
+                if len(members) >= row["max_capacity"]:
+                    raise HTTPException(status_code=400, detail="Lounge is full (5/5)")
+                cur.execute("SELECT id, members FROM tavern_lounges")
+                for other in cur.fetchall():
+                    om = list(other["members"] or [])
+                    if uname in om:
+                        om.remove(uname)
+                        cur.execute("UPDATE tavern_lounges SET members = %s::jsonb WHERE id = %s", (json.dumps(om), other["id"]))
+                members.append(uname)
+                cur.execute(
+                    "UPDATE tavern_lounges SET members = %s::jsonb WHERE id = %s RETURNING *",
+                    (json.dumps(members), req.lounge_id),
+                )
+                row = cur.fetchone()
+    finally:
+        release_conn(conn)
+    await ws_manager.broadcast("tavern", {"type": "lounges:refresh", "active_lounge": row})
+    return {"ok": True, "lounge": row}
+
+@app.post("/api/lounges/{lounge_id}/leave")
+async def leave_lounge(lounge_id: str, req: LoungeJoinPassReq):
+    uname = req.username.strip()[:32] or "Guest"
+    conn = get_conn()
+    try:
+        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            cur.execute("SELECT members FROM tavern_lounges WHERE id = %s", (lounge_id,))
+            row = cur.fetchone()
+            if row:
+                members = [m for m in (row["members"] or []) if m != uname]
+                cur.execute("UPDATE tavern_lounges SET members = %s::jsonb WHERE id = %s", (json.dumps(members), lounge_id))
+    finally:
+        release_conn(conn)
+    await ws_manager.broadcast("tavern", {"type": "lounges:refresh"})
+    return {"ok": True}
+
+@app.post("/api/lounges/sync_music")
+async def sync_lounge_music(req: LoungeMusicSyncReq):
+    conn = get_conn()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "UPDATE tavern_lounges SET current_track = %s, video_id = %s WHERE id = %s",
+                (req.title[:120], req.video_id[:32], req.lounge_id),
+            )
+    finally:
+        release_conn(conn)
+    payload = {
+        "type": "lounge:music",
+        "loungeId": req.lounge_id,
+        "title": req.title,
+        "videoId": req.video_id,
+        "stationIdx": req.station_idx,
+        "isPlaying": req.is_playing,
+    }
+    await ws_manager.broadcast("tavern", payload)
+    return {"ok": True}
 
 @app.post("/api/lounges/{lounge_id}/join")
 async def join_lounge(lounge_id: str, user=Depends(get_current_user)):
@@ -704,6 +835,40 @@ async def join_lounge(lounge_id: str, user=Depends(get_current_user)):
             return {"ok": True, "lounge_id": lounge_id, "members": members}
     finally:
         release_conn(conn)
+
+@app.get("/api/music/youtube")
+def search_youtube_music(q: str):
+    api_key = os.getenv("YOUTUBE_API_KEY", "").strip()
+    if not api_key:
+        raise HTTPException(status_code=404, detail="YOUTUBE_API_KEY not configured")
+    url = "https://www.googleapis.com/youtube/v3/search?" + urllib.parse.urlencode({
+        "part": "snippet", "q": q, "type": "video", "videoEmbeddable": "true", "maxResults": 1, "key": api_key
+    })
+    with urllib.request.urlopen(url, timeout=6) as resp:
+        data = json.loads(resp.read().decode("utf-8"))
+    items = data.get("items", [])
+    if not items:
+        raise HTTPException(status_code=404, detail="No YouTube track found")
+    item = items[0]
+    return {
+        "videoId": item["id"]["videoId"],
+        "title": item["snippet"]["title"],
+        "channel": item["snippet"]["channelTitle"]
+    }
+
+@app.post("/api/bots/chat")
+def bot_ai_chat(req: BotChatReq):
+    api_key = os.getenv("GEMINI_API_KEY", "").strip()
+    if not api_key:
+        raise HTTPException(status_code=404, detail="GEMINI_API_KEY not configured")
+    url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=" + urllib.parse.quote(api_key)
+    prompt = f"You are {req.bot_name}, a friendly {req.bot_role} inside the C9nnect social & gaming platform. Reply in 1-2 short, fun sentences to: {req.message}"
+    body = json.dumps({"contents": [{"parts": [{"text": prompt}]}]}).encode("utf-8")
+    r = urllib.request.Request(url, data=body, headers={"Content-Type": "application/json"}, method="POST")
+    with urllib.request.urlopen(r, timeout=8) as resp:
+        data = json.loads(resp.read().decode("utf-8"))
+    reply = data["candidates"][0]["content"]["parts"][0]["text"].strip()
+    return {"reply": reply}
 
 @app.get("/api/stories")
 def get_stories():

@@ -125,3 +125,26 @@ ALTER TABLE lounges ADD COLUMN IF NOT EXISTS passcode TEXT DEFAULT '';
 ALTER TABLE lounges ADD COLUMN IF NOT EXISTS host_name TEXT DEFAULT 'Host';
 ALTER TABLE lounges ADD COLUMN IF NOT EXISTS current_track TEXT DEFAULT '';
 ALTER TABLE lounges ADD COLUMN IF NOT EXISTS video_id TEXT DEFAULT '';
+
+CREATE TABLE IF NOT EXISTS tavern_lounges (
+  id VARCHAR(32) PRIMARY KEY,
+  name VARCHAR(64) NOT NULL,
+  members JSONB DEFAULT '[]'::jsonb,
+  max_capacity INT DEFAULT 5,
+  passcode TEXT DEFAULT '',
+  host_name TEXT DEFAULT 'Host',
+  current_track TEXT DEFAULT 'Ancient Tavern Hearth & Rain Synth',
+  video_id TEXT DEFAULT ''
+);
+
+ALTER TABLE tavern_lounges ADD COLUMN IF NOT EXISTS passcode TEXT DEFAULT '';
+ALTER TABLE tavern_lounges ADD COLUMN IF NOT EXISTS host_name TEXT DEFAULT 'Host';
+ALTER TABLE tavern_lounges ADD COLUMN IF NOT EXISTS current_track TEXT DEFAULT '';
+ALTER TABLE tavern_lounges ADD COLUMN IF NOT EXISTS video_id TEXT DEFAULT '';
+
+INSERT INTO tavern_lounges (id, name, members, max_capacity) VALUES
+('alpha', 'Lounge Alpha', '[]'::jsonb, 5),
+('booth', 'Midnight Booth', '[]'::jsonb, 5),
+('gamer', 'Gamer Den', '[]'::jsonb, 5),
+('tea', 'Sakura Room', '[]'::jsonb, 5)
+ON CONFLICT (id) DO NOTHING;

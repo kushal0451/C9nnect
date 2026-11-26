@@ -8,11 +8,13 @@ import secrets
 import smtplib
 import urllib.request
 import urllib.parse
+from collections import deque
 from email.message import EmailMessage
 from datetime import datetime, timedelta
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Deque
 
 import jwt
+import httpx
 import psycopg2
 import psycopg2.extras
 from psycopg2 import pool
@@ -30,6 +32,11 @@ ADMIN_SECRET = os.getenv("ADMIN_SECRET", "admin123")
 DATABASE_URL = os.getenv("DATABASE_URL", "")
 if DATABASE_URL.startswith("postgres://"):
     DATABASE_URL = "postgres://" + DATABASE_URL[len("postgres://"):]
+
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "").strip()
+GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash").strip()
+IMGFLIP_USERNAME = os.getenv("IMGFLIP_USERNAME", "").strip()
+IMGFLIP_PASSWORD = os.getenv("IMGFLIP_PASSWORD", "").strip()
 
 pwd_ctx = CryptContext(schemes=["bcrypt"], deprecated="auto")
 pg_pool = pool.SimpleConnectionPool(1, 10, dsn=DATABASE_URL) if DATABASE_URL else None
@@ -69,6 +76,41 @@ app.add_middleware(
 @app.on_event("startup")
 def on_startup():
     init_schema()
+
+# ================= GLOBAL CHAT HISTORY & LOUNGE TIMELINE STATE =================
+MAX_CHAT_HISTORY = 100
+GLOBAL_CHAT_HISTORY: List[dict] = []
+
+def _record_chat_message(msg: dict):
+    GLOBAL_CHAT_HISTORY.append(msg)
+    if len(GLOBAL_CHAT_HISTORY) > MAX_CHAT_HISTORY:
+        del GLOBAL_CHAT_HISTORY[: len(GLOBAL_CHAT_HISTORY) - MAX_CHAT_HISTORY]
+
+def _compute_music_state(lounge_id: str, raw_state: Optional[dict], fallback_track: str = "Ancient Tavern Hearth & Rain Synth", fallback_vid: str = "") -> dict:
+    now = time.time()
+    if not raw_state:
+        return {
+            "loungeId": lounge_id,
+            "title": fallback_track,
+            "videoId": fallback_vid,
+            "stationIdx": 0,
+            "isPlaying": False,
+            "positionSec": 0.0,
+            "elapsed": 0.0,
+            "startedAt": now,
+            "updatedAt": now,
+        }
+    is_playing = bool(raw_state.get("isPlaying", True))
+    base_pos = float(raw_state.get("positionSec", 0.0) or 0.0)
+    updated_at = float(raw_state.get("updatedAt", now) or now)
+    elapsed = round(max(0.0, base_pos + (now - updated_at if is_playing else 0.0)), 2)
+    return {
+        **raw_state,
+        "loungeId": lounge_id,
+        "isPlaying": is_playing,
+        "positionSec": elapsed,
+        "elapsed": elapsed,
+    }
 
 # ================= WEBSOCKET CONNECTION & PRESENCE MANAGER =================
 class ConnectionManager:
@@ -179,13 +221,236 @@ def require_admin(x_admin_key: Optional[str] = Header(None)):
     if x_admin_key != ADMIN_SECRET:
         raise HTTPException(status_code=403, detail="Invalid Admin Key")
 
-# ================= PYTHON RICH CHAT & BOT COMMAND ENGINE =================
-MEME_POOL = [
+# ================= GEMINI AI & NON-REPEATING MULTI-API MEME ENGINE =================
+FALLBACK_MEMES: List[tuple] = [
     ("https://i.imgflip.com/1bij.jpg", "One Does Not Simply Deploy on Friday"),
     ("https://i.imgflip.com/30b1gx.jpg", "Drake Approves: Python + PostgreSQL"),
     ("https://i.imgflip.com/4/1ti1.jpg", "Coding at 3 AM With 47 Browser Tabs"),
     ("https://i.imgflip.com/26am.jpg", "When the WebSocket Syncs on the First Try"),
+    ("https://i.imgflip.com/1g8my4.jpg", "Two Buttons — Sleep vs Fixing One More Bug"),
+    ("https://i.imgflip.com/261o3j.jpg", "I Am Once Again Asking For Synced Audio"),
+    ("https://i.imgflip.com/4t0m5.jpg", "Change My Mind — Lounge Rooms Need Shared Beats"),
+    ("https://i.imgflip.com/2fm6x.jpg", "Sweating Guy — Deploying Right Before Midnight"),
+    ("https://i.imgflip.com/1otk96.jpg", "Expanding Brain — Pure Python Real-Time Sync"),
 ]
+
+MEME_CAPTIONS: List[tuple] = [
+    ("When the WebSocket syncs", "on the very first try"),
+    ("Deploying on Friday night", "what could possibly go wrong?"),
+    ("Me reading my own code", "from three weeks ago"),
+    ("Everyone in the lounge", "vibing to the same track"),
+    ("Fixing one bug in app.py", "creating three new features"),
+    ("When the bot replies", "faster than real players"),
+]
+
+RECENT_MEME_URLS: Deque[str] = deque(maxlen=30)
+MEME_BUFFER: Deque[tuple] = deque()
+TEMPLATE_URL_BUFFER: Deque[tuple] = deque()
+
+async def ask_gemini(prompt: str, system_hint: str = "", max_tokens: int = 180) -> Optional[str]:
+    if not GEMINI_API_KEY:
+        return None
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent"
+    payload = {
+        "contents": [{"parts": [{"text": prompt}]}],
+        "generationConfig": {"maxOutputTokens": max_tokens},
+    }
+    if system_hint:
+        payload["systemInstruction"] = {"parts": [{"text": system_hint}]}
+    try:
+        async with httpx.AsyncClient(timeout=8.0) as client:
+            r = await client.post(
+                url,
+                headers={"x-goog-api-key": GEMINI_API_KEY, "Content-Type": "application/json"},
+                json=payload,
+            )
+            if r.status_code == 200:
+                data = r.json()
+                candidates = data.get("candidates") or []
+                if candidates:
+                    parts = ((candidates[0].get("content") or {}).get("parts")) or []
+                    text = "".join(p.get("text", "") for p in parts).strip()
+                    if text:
+                        return text
+    except Exception:
+        pass
+    return None
+
+async def _fetch_from_justmeme(client: httpx.AsyncClient, prompt: str = "") -> Optional[tuple]:
+    try:
+        if prompt:
+            r = await client.post("https://justmeme.wtf/api/v1/ai-generate", json={"prompt": prompt}, timeout=5.0)
+            if r.status_code == 200:
+                data = r.json()
+                url = (data.get("image_url") or data.get("url") or data.get("editor_url") or "").strip()
+                top = (data.get("top_text") or "").strip()
+                bottom = (data.get("bottom_text") or "").strip()
+                title = " — ".join([p for p in (top, bottom) if p]) or (data.get("template") or "AI Meme")
+                title = title.replace("|", "-").replace("]", "")
+                if url.startswith("http"):
+                    return (url, title)
+        else:
+            r = await client.get("https://justmeme.wtf/api/v1/random", timeout=4.5)
+            if r.status_code == 200:
+                data = r.json()
+                tpl = data.get("template") or data
+                url = (tpl.get("url") or tpl.get("image_url") or "").strip()
+                title = (tpl.get("name") or tpl.get("title") or "Random Meme").replace("|", "-").replace("]", "")
+                if url.startswith("http"):
+                    return (url, title)
+    except Exception:
+        pass
+    return None
+
+async def _fetch_from_imgflip(client: httpx.AsyncClient) -> List[tuple]:
+    results: List[tuple] = []
+    try:
+        r = await client.get("https://api.imgflip.com/get_memes", timeout=5.0)
+        if r.status_code == 200:
+            payload = r.json()
+            memes = (payload.get("data") or {}).get("memes") or []
+            random.shuffle(memes)
+            for tpl in memes[:12]:
+                tpl_id = str(tpl.get("id") or "")
+                tpl_name = (tpl.get("name") or "Imgflip Meme").replace("|", "-").replace("]", "")
+                tpl_url = (tpl.get("url") or "").strip()
+                if tpl_url.startswith("http"):
+                    TEMPLATE_URL_BUFFER.append((tpl_url, tpl_name))
+
+                top_txt, bot_txt = random.choice(MEME_CAPTIONS)
+                if IMGFLIP_USERNAME and IMGFLIP_PASSWORD and tpl_id:
+                    cap = await client.post(
+                        "https://api.imgflip.com/caption_image",
+                        data={
+                            "template_id": tpl_id,
+                            "username": IMGFLIP_USERNAME,
+                            "password": IMGFLIP_PASSWORD,
+                            "text0": top_txt,
+                            "text1": bot_txt,
+                        },
+                        timeout=6.0,
+                    )
+                    if cap.status_code == 200:
+                        cap_json = cap.json()
+                        captioned_url = ((cap_json.get("data") or {}).get("url") or "").strip()
+                        if cap_json.get("success") and captioned_url.startswith("http"):
+                            results.append((captioned_url, f"{tpl_name}: {top_txt} / {bot_txt}"))
+                            continue
+
+                if tpl_url.startswith("http"):
+                    results.append((tpl_url, f"{tpl_name} — {top_txt}"))
+    except Exception:
+        pass
+    return results
+
+async def _fetch_from_meme_api(client: httpx.AsyncClient) -> List[tuple]:
+    results: List[tuple] = []
+    try:
+        r = await client.get("https://meme-api.com/gimme/15", timeout=4.5)
+        if r.status_code == 200:
+            data = r.json()
+            memes = data.get("memes") or ([data] if isinstance(data, dict) else [])
+            for item in memes:
+                url = (item.get("url") or "").strip()
+                title = (item.get("title") or "Guild Meme").replace("|", "-").replace("]", "").strip()
+                if url.startswith("http"):
+                    results.append((url, title))
+    except Exception:
+        pass
+    return results
+
+async def _gemini_captioned_meme(topic: str) -> Optional[tuple]:
+    if not GEMINI_API_KEY:
+        return None
+    if not TEMPLATE_URL_BUFFER:
+        async with httpx.AsyncClient(timeout=4.5) as client:
+            await _fetch_from_imgflip(client)
+
+    tpl_url, tpl_name = ("", "")
+    while TEMPLATE_URL_BUFFER:
+        cand_url, cand_name = TEMPLATE_URL_BUFFER.popleft()
+        if cand_url not in RECENT_MEME_URLS:
+            tpl_url, tpl_name = cand_url, cand_name
+            break
+
+    if not tpl_url:
+        unused_fb = [m for m in FALLBACK_MEMES if m[0] not in RECENT_MEME_URLS]
+        tpl_url, tpl_name = random.choice(unused_fb if unused_fb else FALLBACK_MEMES)
+
+    subject = topic or "late night coding, gaming lounges, and synced music"
+    caption = await ask_gemini(
+        f"Write a short, punchy meme caption (max 10 words, no quotes, no '|', no ']') for a '{tpl_name}' meme about: {subject}",
+        system_hint="You are MemeBot for C9nnect. Output only a single witty meme caption.",
+        max_tokens=50,
+    )
+    if not caption:
+        return None
+    clean_caption = caption.replace("|", "-").replace("]", "").replace("\n", " ").strip()
+    return (tpl_url, clean_caption)
+
+async def _refill_meme_buffer(topic: str = ""):
+    collected: List[tuple] = []
+    async with httpx.AsyncClient() as client:
+        if topic:
+            ai_meme = await _fetch_from_justmeme(client, prompt=topic)
+            if ai_meme:
+                collected.append(ai_meme)
+            gem_meme = await _gemini_captioned_meme(topic)
+            if gem_meme:
+                collected.append(gem_meme)
+
+        providers = [
+            _fetch_from_meme_api(client),
+            _fetch_from_imgflip(client),
+        ]
+        random.shuffle(providers)
+        for coro in providers:
+            collected.extend(await coro)
+
+        rand_jm = await _fetch_from_justmeme(client, prompt="")
+        if rand_jm:
+            collected.append(rand_jm)
+
+    fresh = [(u, t) for (u, t) in collected if u not in RECENT_MEME_URLS]
+    pool = fresh if fresh else collected
+    random.shuffle(pool)
+    for pair in pool:
+        MEME_BUFFER.append(pair)
+
+    if not MEME_BUFFER:
+        unused_fallbacks = [m for m in FALLBACK_MEMES if m[0] not in RECENT_MEME_URLS]
+        fb_pool = unused_fallbacks if unused_fallbacks else list(FALLBACK_MEMES)
+        random.shuffle(fb_pool)
+        for pair in fb_pool:
+            MEME_BUFFER.append(pair)
+
+async def fetch_meme_token(topic: str = "") -> str:
+    if not topic and GEMINI_API_KEY and random.random() < 0.45:
+        gem_random = await _gemini_captioned_meme("")
+        if gem_random:
+            url, title = gem_random
+            RECENT_MEME_URLS.append(url)
+            return f"[MEME_IMG:{url}|{title}]"
+
+    if topic or not MEME_BUFFER:
+        await _refill_meme_buffer(topic=topic)
+
+    attempts = 0
+    while MEME_BUFFER and attempts < 25:
+        attempts += 1
+        url, title = MEME_BUFFER.popleft()
+        if url not in RECENT_MEME_URLS or len(RECENT_MEME_URLS) >= 25:
+            RECENT_MEME_URLS.append(url)
+            return f"[MEME_IMG:{url}|{title}]"
+
+    await _refill_meme_buffer(topic=topic)
+    if MEME_BUFFER:
+        url, title = MEME_BUFFER.popleft()
+        RECENT_MEME_URLS.append(url)
+        return f"[MEME_IMG:{url}|{title}]"
+
+    url, title = random.choice(FALLBACK_MEMES)
+    return f"[MEME_IMG:{url}|{title}]"
 
 def format_rich_message_py(text: str) -> str:
     """Converts [MEME_IMG:url|title] tokens into HTML image cards in Python."""
@@ -204,10 +469,18 @@ async def execute_bot_command_py(raw_cmd: str, sender: str = "Wanderer", room: s
     """Handles /, !, and - bot commands in Python for #Global and Lounge/Tavern chat."""
     cmd = (raw_cmd or "").strip()
     lower = cmd.lower()
+    arg = cmd.split(" ", 1)[1].strip() if " " in cmd else ""
 
     if lower.startswith(("/meme", "!meme", "-meme")):
-        url, title = random.choice(MEME_POOL)
-        reply_text = f"[MEME_IMG:{url}|{title}]"
+        token = await fetch_meme_token(topic=arg)
+        reply_text = token
+    elif lower.startswith(("/ask", "!ask", "-ask", "/oracle", "!oracle", "-oracle")):
+        ai_reply = await ask_gemini(
+            arg or "Give a mysterious RPG fortune for our squad tonight.",
+            system_hint="You are OracleBot inside C9nnect, a real-time anime & gaming lounge. Reply in 1-2 short, fun sentences.",
+            max_tokens=140,
+        )
+        reply_text = f"🔮 {ai_reply}" if ai_reply else "✨ A rare Archon drop awaits your squad tonight."
     elif lower.startswith(("/roll", "!roll", "-roll")):
         roll = random.randint(1, 20)
         reply_text = f"🎲 {sender} rolled a **{roll}** (d20)!"
@@ -215,7 +488,7 @@ async def execute_bot_command_py(raw_cmd: str, sender: str = "Wanderer", room: s
         choice = random.choice(["Rock 🪨", "Paper 📄", "Scissors ✂️"])
         reply_text = f"✊ RealmBot picks **{choice}** against {sender}!"
     elif lower.startswith(("/play", "!play", "-play")):
-        query = cmd.split(" ", 1)[1].strip() if " " in cmd else "lofi chill beats"
+        query = arg or "lofi chill beats"
         api_key = os.getenv("YOUTUBE_API_KEY", "").strip()
         if api_key:
             try:
@@ -233,16 +506,19 @@ async def execute_bot_command_py(raw_cmd: str, sender: str = "Wanderer", room: s
         else:
             reply_text = f"🎵 Queued tavern vibe: **{query}**"
     else:
-        reply_text = "🤖 Commands available: `/meme`, `/roll`, `/rps`, `/play <song>`"
+        reply_text = "🤖 Commands available: `/meme [topic]`, `/roll`, `/rps`, `/play <song>`, `/ask <question>`, `/oracle`"
 
     payload = {
+        "id": f"bot_{uuid.uuid4().hex[:10]}",
         "type": "message:new",
         "sender": "RealmBot",
         "target": room,
         "text": reply_text,
         "html": format_rich_message_py(reply_text),
+        "ts": time.time(),
     }
     if room == "global":
+        _record_chat_message(payload)
         await ws_manager.broadcast_all(payload)
     else:
         await ws_manager.broadcast(room, payload)
@@ -255,9 +531,13 @@ def _fetch_all_lounges_sync() -> List[dict]:
             cur.execute("SELECT * FROM tavern_lounges ORDER BY id ASC")
             rows = cur.fetchall()
             for r in rows:
-                music = ws_manager.lounge_music_state.get(r["id"])
-                if music:
-                    r["music_state"] = music
+                music = _compute_music_state(
+                    r["id"],
+                    ws_manager.lounge_music_state.get(r["id"]),
+                    fallback_track=r.get("current_track") or "Ancient Tavern Hearth & Rain Synth",
+                    fallback_vid=r.get("video_id") or "",
+                )
+                r["music_state"] = music
             return rows
     finally:
         release_conn(conn)
@@ -372,7 +652,7 @@ def serve_admin():
 
 @app.get("/health")
 def health():
-    return {"status": "ok", "db_configured": bool(pg_pool)}
+    return {"status": "ok", "db_configured": bool(pg_pool), "gemini_enabled": bool(GEMINI_API_KEY)}
 
 @app.get("/api/presence")
 def get_presence():
@@ -380,6 +660,7 @@ def get_presence():
         "online_users": ws_manager.get_online_users(),
         "online_count": len(ws_manager.get_online_users()),
         "lounges": _fetch_all_lounges_sync(),
+        "global_chat_history": GLOBAL_CHAT_HISTORY,
     }
 
 # ================= AUTH ROUTES =================
@@ -692,13 +973,16 @@ async def post_message(req: MessageReq, user=Depends(get_current_user)):
     finally:
         release_conn(conn)
     payload = {
+        "id": f"msg_{uuid.uuid4().hex[:10]}",
         "type": "message:new",
         "sender": user["username"],
         "target": req.target,
         "text": clean_text,
         "html": format_rich_message_py(clean_text),
+        "ts": time.time(),
     }
     if req.target == "global":
+        _record_chat_message(payload)
         await ws_manager.broadcast_all(payload)
     else:
         await ws_manager.broadcast(req.target, payload)
@@ -720,6 +1004,13 @@ def format_chat_endpoint(text: str = Query("")):
 @app.websocket("/ws/{room}")
 async def websocket_room(ws: WebSocket, room: str):
     await ws_manager.connect(room, ws)
+    await ws.send_json({
+        "type": "sync:init",
+        "room": room,
+        "global_chat_history": GLOBAL_CHAT_HISTORY,
+        "online_users": ws_manager.get_online_users(),
+        "lounges": _fetch_all_lounges_sync(),
+    })
     try:
         while True:
             data = await ws.receive_json()
@@ -738,9 +1029,22 @@ async def websocket_room(ws: WebSocket, room: str):
                 })
                 continue
 
+            if ev_type == "sync:request":
+                await ws.send_json({
+                    "type": "sync:init",
+                    "room": room,
+                    "global_chat_history": GLOBAL_CHAT_HISTORY,
+                    "online_users": ws_manager.get_online_users(),
+                    "lounges": _fetch_all_lounges_sync(),
+                })
+                continue
+
             if msg_text:
+                data.setdefault("id", f"msg_{uuid.uuid4().hex[:10]}")
+                data.setdefault("ts", time.time())
                 data["html"] = format_rich_message_py(msg_text)
                 if room == "global" or str(data.get("target") or "").lower() == "global":
+                    _record_chat_message(data)
                     await ws_manager.broadcast_all(data)
                 else:
                     await ws_manager.broadcast(room, data)
@@ -850,15 +1154,12 @@ def get_lounge_state(lounge_id: str):
             row = cur.fetchone()
             if not row:
                 raise HTTPException(status_code=404, detail="Lounge not found")
-            row["music_state"] = ws_manager.lounge_music_state.get(lounge_id, {
-                "loungeId": lounge_id,
-                "title": row.get("current_track") or "Ancient Tavern Hearth & Rain Synth",
-                "videoId": row.get("video_id") or "",
-                "stationIdx": 0,
-                "isPlaying": False,
-                "positionSec": 0.0,
-                "updatedAt": time.time(),
-            })
+            row["music_state"] = _compute_music_state(
+                lounge_id,
+                ws_manager.lounge_music_state.get(lounge_id),
+                fallback_track=row.get("current_track") or "Ancient Tavern Hearth & Rain Synth",
+                fallback_vid=row.get("video_id") or "",
+            )
             row["online_users"] = ws_manager.get_online_users()
             return row
     finally:
@@ -920,9 +1221,13 @@ async def join_lounge_with_pass(req: LoungeJoinPassReq):
     for ws, meta in ws_manager.socket_meta.items():
         if meta.get("username") == uname:
             meta["lounge_id"] = req.lounge_id
-    music = ws_manager.lounge_music_state.get(req.lounge_id)
-    if music:
-        row["music_state"] = music
+    music = _compute_music_state(
+        req.lounge_id,
+        ws_manager.lounge_music_state.get(req.lounge_id),
+        fallback_track=row.get("current_track") or "Ancient Tavern Hearth & Rain Synth",
+        fallback_vid=row.get("video_id") or "",
+    )
+    row["music_state"] = music
     lounges = _fetch_all_lounges_sync()
     await ws_manager.broadcast_all({
         "type": "lounges:refresh",
@@ -930,6 +1235,7 @@ async def join_lounge_with_pass(req: LoungeJoinPassReq):
         "active_lounge": row,
         "joined_user": uname,
         "lounge_id": req.lounge_id,
+        "music_state": music,
         "online_users": ws_manager.get_online_users(),
     })
     return {"ok": True, "lounge": row, "music_state": music}
@@ -971,6 +1277,7 @@ async def sync_lounge_music(req: LoungeMusicSyncReq):
             )
     finally:
         release_conn(conn)
+    now = time.time()
     payload = {
         "type": "lounge:music",
         "loungeId": req.lounge_id,
@@ -978,9 +1285,11 @@ async def sync_lounge_music(req: LoungeMusicSyncReq):
         "videoId": req.video_id,
         "stationIdx": req.station_idx,
         "isPlaying": req.is_playing,
-        "positionSec": req.position_sec,
+        "positionSec": float(req.position_sec or 0.0),
+        "elapsed": float(req.position_sec or 0.0),
         "updatedBy": req.updated_by,
-        "updatedAt": time.time(),
+        "startedAt": now,
+        "updatedAt": now,
     }
     ws_manager.lounge_music_state[req.lounge_id] = payload
     await ws_manager.broadcast_all(payload)
@@ -1043,17 +1352,16 @@ def search_youtube_music(q: str):
     }
 
 @app.post("/api/bots/chat")
-def bot_ai_chat(req: BotChatReq):
-    api_key = os.getenv("GEMINI_API_KEY", "").strip()
-    if not api_key:
+async def bot_ai_chat(req: BotChatReq):
+    if not GEMINI_API_KEY:
         raise HTTPException(status_code=404, detail="GEMINI_API_KEY not configured")
-    url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=" + urllib.parse.quote(api_key)
-    prompt = f"You are {req.bot_name}, a friendly {req.bot_role} inside the C9nnect social & gaming platform. Reply in 1-2 short, fun sentences to: {req.message}"
-    body = json.dumps({"contents": [{"parts": [{"text": prompt}]}]}).encode("utf-8")
-    r = urllib.request.Request(url, data=body, headers={"Content-Type": "application/json"}, method="POST")
-    with urllib.request.urlopen(r, timeout=8) as resp:
-        data = json.loads(resp.read().decode("utf-8"))
-    reply = data["candidates"][0]["content"]["parts"][0]["text"].strip()
+    reply = await ask_gemini(
+        req.message,
+        system_hint=f"You are {req.bot_name}, a friendly {req.bot_role} inside the C9nnect social & gaming platform. Reply in 1-2 short, fun sentences.",
+        max_tokens=150,
+    )
+    if not reply:
+        raise HTTPException(status_code=502, detail="Failed to get response from Gemini")
     return {"reply": reply}
 
 @app.get("/api/stories")

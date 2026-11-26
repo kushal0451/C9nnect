@@ -22,8 +22,8 @@ load_dotenv()
 JWT_SECRET = os.getenv("JWT_SECRET", "c9nnect_dev_secret_change_me")
 ADMIN_SECRET = os.getenv("ADMIN_SECRET", "admin123")
 DATABASE_URL = os.getenv("DATABASE_URL", "")
-if DATABASE_URL.startswith("Postgres://"):
-    DATABASE_URL = "postgres://" + DATABASE_URL[len("Postgres://"):]
+if DATABASE_URL.startswith("postgres://"):
+    DATABASE_URL = "postgres://" + DATABASE_URL[len("postgres://"):]
 
 pwd_ctx = CryptContext(schemes=["bcrypt"], deprecated="auto")
 pg_pool = pool.SimpleConnectionPool(1, 10, dsn=DATABASE_URL) if DATABASE_URL else None

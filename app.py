@@ -1,70 +1,58 @@
-import os
-import re
+import asyncio
 import json
-import uuid
-import time
+import os
 import random
+import re
 import secrets
 import smtplib
-import urllib.request
-import urllib.parse
-from collections import deque
+import time
+from collections import defaultdict
+from datetime import datetime, timedelta, timezone
 from email.message import EmailMessage
-from datetime import datetime, timedelta
-from typing import Dict, List, Optional, Deque
+from typing import Any, Dict, List, Optional
 
-import jwt
 import httpx
-import psycopg2
-import psycopg2.extras
-from psycopg2 import pool
-from passlib.context import CryptContext
-from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException, Header, WebSocket, WebSocketDisconnect, Depends, Query
+import jwt
+from fastapi import (
+    Depends,
+    FastAPI,
+    Header,
+    HTTPException,
+    Path,
+    Query,
+    WebSocket,
+    WebSocketDisconnect,
+)
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
-from pydantic import BaseModel, EmailStr
+from fastapi.responses import FileResponse, JSONResponse
+from passlib.context import CryptContext
+from psycopg2.extras import RealDictCursor
+from psycopg2.pool import ThreadedConnectionPool
+from pydantic import BaseModel, Field
 
-load_dotenv()
-
-JWT_SECRET = os.getenv("JWT_SECRET", "c9nnect_dev_secret_change_me")
-ADMIN_SECRET = os.getenv("ADMIN_SECRET", "admin123")
+# ---------------------------------------------------------------------------
+# Configuration & App Setup
+# ---------------------------------------------------------------------------
 DATABASE_URL = os.getenv("DATABASE_URL", "")
-if DATABASE_URL.startswith("postgres://"):
-    DATABASE_URL = "postgres://" + DATABASE_URL[len("postgres://"):]
+SECRET_KEY = os.getenv("JWT_SECRET") or os.getenv("SECRET_KEY") or "change-me-in-production-secret"
+ADMIN_KEY = os.getenv("ADMIN_KEY", "admin-secret-key")
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
+YOUTUBE_API_KEY = os.getenv("YOUTUBE_API_KEY", "")
+SMTP_HOST = os.getenv("SMTP_HOST", "")
+SMTP_PORT = int(os.getenv("SMTP_PORT", "587"))
+SMTP_USER = os.getenv("SMTP_USER", "")
+SMTP_PASS = os.getenv("SMTP_PASS", "")
+SMTP_FROM = os.getenv("SMTP_FROM", SMTP_USER or "noreply@example.com")
 
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "").strip()
-GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash").strip()
-IMGFLIP_USERNAME = os.getenv("IMGFLIP_USERNAME", "").strip()
-IMGFLIP_PASSWORD = os.getenv("IMGFLIP_PASSWORD", "").strip()
+ALGORITHM = "HS256"
+TOKEN_EXPIRE_HOURS = 72
+DAILY_HONOR_CAP = 500
+MAX_LOUNGE_MEMBERS = 12
 
-pwd_ctx = CryptContext(schemes=["bcrypt"], deprecated="auto")
-pg_pool = pool.SimpleConnectionPool(1, 10, dsn=DATABASE_URL) if DATABASE_URL else None
+pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
-def get_conn():
-    if not pg_pool:
-        raise HTTPException(status_code=500, detail="DATABASE_URL is not configured")
-    conn = pg_pool.getconn()
-    conn.autocommit = True
-    return conn
+app = FastAPI(title="Synchronized Social & Gaming Hub", version="2.0.0")
 
-def release_conn(conn):
-    if pg_pool and conn:
-        pg_pool.putconn(conn)
-
-def init_schema():
-    if not pg_pool:
-        return
-    schema_path = os.path.join(os.path.dirname(__file__), "schema.sql")
-    if os.path.exists(schema_path):
-        conn = get_conn()
-        try:
-            with conn.cursor() as cur:
-                cur.execute(open(schema_path, "r", encoding="utf-8").read())
-        finally:
-            release_conn(conn)
-
-app = FastAPI(title="C9nnect Full-Stack Python + PostgreSQL")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -73,1348 +61,2293 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-@app.on_event("startup")
-def on_startup():
-    init_schema()
+db_pool: Optional[ThreadedConnectionPool] = None
 
-# ================= GLOBAL CHAT HISTORY & LOUNGE TIMELINE STATE =================
-MAX_CHAT_HISTORY = 100
-GLOBAL_CHAT_HISTORY: List[dict] = []
 
-def _record_chat_message(msg: dict):
-    GLOBAL_CHAT_HISTORY.append(msg)
-    if len(GLOBAL_CHAT_HISTORY) > MAX_CHAT_HISTORY:
-        del GLOBAL_CHAT_HISTORY[: len(GLOBAL_CHAT_HISTORY) - MAX_CHAT_HISTORY]
+def now_utc() -> datetime:
+    return datetime.now(timezone.utc)
 
-def _compute_music_state(lounge_id: str, raw_state: Optional[dict], fallback_track: str = "Ancient Tavern Hearth & Rain Synth", fallback_vid: str = "") -> dict:
-    now = time.time()
-    if not raw_state:
-        return {
-            "loungeId": lounge_id,
-            "title": fallback_track,
-            "videoId": fallback_vid,
-            "stationIdx": 0,
-            "isPlaying": False,
-            "positionSec": 0.0,
-            "elapsed": 0.0,
-            "startedAt": now,
-            "updatedAt": now,
-        }
-    is_playing = bool(raw_state.get("isPlaying", True))
-    base_pos = float(raw_state.get("positionSec", 0.0) or 0.0)
-    updated_at = float(raw_state.get("updatedAt", now) or now)
-    elapsed = round(max(0.0, base_pos + (now - updated_at if is_playing else 0.0)), 2)
-    return {
-        **raw_state,
-        "loungeId": lounge_id,
-        "isPlaying": is_playing,
-        "positionSec": elapsed,
-        "elapsed": elapsed,
-    }
 
-# ================= WEBSOCKET CONNECTION & PRESENCE MANAGER =================
-class ConnectionManager:
+def now_ts() -> float:
+    return time.time()
+
+
+def get_db_connection():
+    global db_pool
+    if db_pool is None:
+        if not DATABASE_URL:
+            raise HTTPException(status_code=500, detail="DATABASE_URL is not configured")
+        db_pool = ThreadedConnectionPool(minconn=1, maxconn=15, dsn=DATABASE_URL)
+    return db_pool.getconn()
+
+
+def release_db_connection(conn):
+    if db_pool and conn:
+        try:
+            db_pool.putconn(conn)
+        except Exception:
+            pass
+
+
+# ---------------------------------------------------------------------------
+# WebSocket Connection & Presence Manager
+# ---------------------------------------------------------------------------
+class RoomManager:
     def __init__(self):
-        self.rooms: Dict[str, List[WebSocket]] = {}
-        self.socket_meta: Dict[WebSocket, dict] = {}
-        self.lounge_music_state: Dict[str, dict] = {}
+        # room_name -> list of {"ws": WebSocket, "user": dict}
+        self.rooms: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
+        # username -> set of rooms
+        self.user_rooms: Dict[str, set] = defaultdict(set)
+        # username -> last seen timestamp
+        self.online_users: Dict[str, float] = {}
+        self.lock = asyncio.Lock()
 
-    async def connect(self, room: str, ws: WebSocket, username: str = "Guest", lounge_id: Optional[str] = None):
+    async def connect(self, room: str, ws: WebSocket, user: Dict[str, Any]):
         await ws.accept()
-        self.rooms.setdefault(room, []).append(ws)
-        self.socket_meta[ws] = {
-            "room": room,
-            "username": username or "Guest",
-            "lounge_id": lounge_id,
-            "connected_at": time.time(),
-        }
+        username = user.get("username", "Guest")
+        async with self.lock:
+            self.rooms[room].append({"ws": ws, "user": user})
+            self.user_rooms[username].add(room)
+            self.online_users[username] = now_ts()
 
-    def update_meta(self, ws: WebSocket, username: Optional[str] = None, lounge_id: Optional[str] = None):
-        meta = self.socket_meta.get(ws)
-        if not meta:
-            return
-        if username:
-            meta["username"] = username
-        if lounge_id is not None:
-            meta["lounge_id"] = lounge_id
+    async def disconnect(self, room: str, ws: WebSocket):
+        left_user = None
+        async with self.lock:
+            entries = self.rooms.get(room, [])
+            remaining = []
+            for entry in entries:
+                if entry["ws"] is ws:
+                    left_user = entry["user"]
+                else:
+                    remaining.append(entry)
+            self.rooms[room] = remaining
 
-    def disconnect(self, room: str, ws: WebSocket):
-        if room in self.rooms and ws in self.rooms[room]:
-            self.rooms[room].remove(ws)
-        return self.socket_meta.pop(ws, None)
+            if left_user:
+                uname = left_user.get("username")
+                if uname:
+                    still_in_room = any(
+                        e["user"].get("username") == uname for e in self.rooms[room]
+                    )
+                    if not still_in_room:
+                        self.user_rooms[uname].discard(room)
 
-    def get_online_users(self) -> List[dict]:
-        seen = {}
-        for meta in self.socket_meta.values():
-            uname = meta.get("username") or "Guest"
-            seen[uname] = {
-                "username": uname,
-                "lounge_id": meta.get("lounge_id"),
-                "room": meta.get("room"),
-            }
-        return list(seen.values())
+        if left_user:
+            await self.broadcast(
+                room,
+                {
+                    "type": "presence_leave",
+                    "room": room,
+                    "user": left_user.get("username"),
+                    "timestamp": now_utc().isoformat(),
+                },
+            )
+            await self.broadcast_presence()
 
-    async def broadcast(self, room: str, payload: dict):
+    async def send_personal(self, ws: WebSocket, payload: Dict[str, Any]):
+        try:
+            await ws.send_text(json.dumps(payload, default=str))
+        except Exception:
+            pass
+
+    async def broadcast(self, room: str, payload: Dict[str, Any]):
+        async with self.lock:
+            targets = list(self.rooms.get(room, []))
         dead = []
-        for ws in list(self.rooms.get(room, [])):
+        encoded = json.dumps(payload, default=str)
+        for item in targets:
             try:
-                await ws.send_json(payload)
+                await item["ws"].send_text(encoded)
             except Exception:
-                dead.append(ws)
-        for ws in dead:
-            self.disconnect(room, ws)
+                dead.append(item["ws"])
+        for d in dead:
+            await self.disconnect(room, d)
 
-    async def broadcast_all(self, payload: dict):
-        all_sockets = set()
-        for sockets in self.rooms.values():
-            for ws in sockets:
-                all_sockets.add(ws)
-        dead = []
-        for ws in all_sockets:
-            try:
-                await ws.send_json(payload)
-            except Exception:
-                dead.append(ws)
-        for ws in dead:
-            meta = self.socket_meta.get(ws)
-            if meta and meta.get("room") in self.rooms and ws in self.rooms[meta["room"]]:
-                self.rooms[meta["room"]].remove(ws)
-            self.socket_meta.pop(ws, None)
+    async def broadcast_presence(self):
+        cutoff = now_ts() - 180
+        async with self.lock:
+            active = [u for u, ts in self.online_users.items() if ts >= cutoff]
+            room_counts = {r: len(members) for r, members in self.rooms.items()}
+        await self.broadcast(
+            "global",
+            {
+                "type": "presence_sync",
+                "online_users": sorted(active),
+                "online_count": len(active),
+                "room_counts": room_counts,
+            },
+        )
 
-ws_manager = ConnectionManager()
 
-# ================= EMAIL HELPER =================
-def send_email_notification(to_email: str, subject: str, body: str):
-    smtp_user = os.getenv("SMTP_USER")
-    smtp_pass = os.getenv("SMTP_PASS")
-    if not smtp_user or not smtp_pass:
-        return False
-    msg = EmailMessage()
-    msg["Subject"] = subject
-    msg["From"] = smtp_user
-    msg["To"] = to_email
-    msg.set_content(body)
-    with smtplib.SMTP(os.getenv("SMTP_HOST", "smtp.gmail.com"), int(os.getenv("SMTP_PORT", "587"))) as s:
-        s.starttls()
-        s.login(smtp_user, smtp_pass)
-        s.send_message(msg)
-    return True
+manager = RoomManager()
 
-# ================= AUTH HELPERS =================
-def create_token(uid: str, username: str) -> str:
-    return jwt.encode(
-        {"uid": uid, "username": username, "exp": datetime.utcnow() + timedelta(days=30)},
-        JWT_SECRET,
-        algorithm="HS256",
-    )
 
-def get_current_user(authorization: Optional[str] = Header(None)):
-    if not authorization or not authorization.startswith("Bearer "):
-        raise HTTPException(status_code=401, detail="Missing Bearer token")
-    token = authorization.split(" ", 1)[1]
+# ---------------------------------------------------------------------------
+# Auth & Helper Functions
+# ---------------------------------------------------------------------------
+def hash_password(password: str) -> str:
+    return pwd_context.hash(password)
+
+
+def verify_password(plain_password: str, hashed_password: str) -> bool:
     try:
-        return jwt.decode(token, JWT_SECRET, algorithms=["HS256"])
+        return pwd_context.verify(plain_password, hashed_password)
     except Exception:
+        return False
+
+
+def create_access_token(data: Dict[str, Any]) -> str:
+    to_encode = data.copy()
+    to_encode["exp"] = now_utc() + timedelta(hours=TOKEN_EXPIRE_HOURS)
+    return jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
+
+
+def decode_token(token: str) -> Optional[Dict[str, Any]]:
+    try:
+        return jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+    except Exception:
+        return None
+
+
+def get_current_user(authorization: Optional[str] = Header(default=None)) -> Dict[str, Any]:
+    if not authorization or not authorization.lower().startswith("bearer "):
+        raise HTTPException(status_code=401, detail="Authentication required")
+    token = authorization.split(" ", 1)[1].strip()
+    payload = decode_token(token)
+    if not payload or "username" not in payload:
         raise HTTPException(status_code=401, detail="Invalid or expired token")
 
-def require_admin(x_admin_key: Optional[str] = Header(None)):
-    if x_admin_key != ADMIN_SECRET:
-        raise HTTPException(status_code=403, detail="Invalid Admin Key")
-
-# ================= GEMINI AI & MEME ENGINE =================
-FALLBACK_MEMES: List[tuple] = [
-    ("https://i.imgflip.com/1bij.jpg", "One Does Not Simply Deploy on Friday"),
-    ("https://i.imgflip.com/30b1gx.jpg", "Drake Approves: Python + PostgreSQL"),
-    ("https://i.imgflip.com/4/1ti1.jpg", "Coding at 3 AM With 47 Browser Tabs"),
-    ("https://i.imgflip.com/26am.jpg", "When the WebSocket Syncs on the First Try"),
-    ("https://i.imgflip.com/1g8my4.jpg", "Two Buttons — Sleep vs Fixing One More Bug"),
-    ("https://i.imgflip.com/261o3j.jpg", "I Am Once Again Asking For Synced Audio"),
-    ("https://i.imgflip.com/4t0m5.jpg", "Change My Mind — Lounge Rooms Need Shared Beats"),
-    ("https://i.imgflip.com/2fm6x.jpg", "Sweating Guy — Deploying Right Before Midnight"),
-    ("https://i.imgflip.com/1otk96.jpg", "Expanding Brain — Pure Python Real-Time Sync"),
-]
-
-MEME_CAPTIONS: List[tuple] = [
-    ("When the WebSocket syncs", "on the very first try"),
-    ("Deploying on Friday night", "what could possibly go wrong?"),
-    ("Me reading my own code", "from three weeks ago"),
-    ("Everyone in the lounge", "vibing to the same track"),
-    ("Fixing one bug in app.py", "creating three new features"),
-    ("When the bot replies", "faster than real players"),
-]
-
-RECENT_MEME_URLS: Deque[str] = deque(maxlen=30)
-MEME_BUFFER: Deque[tuple] = deque()
-TEMPLATE_URL_BUFFER: Deque[tuple] = deque()
-
-async def ask_gemini(prompt: str, system_hint: str = "", max_tokens: int = 180) -> Optional[str]:
-    if not GEMINI_API_KEY:
-        return None
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent"
-    payload = {
-        "contents": [{"parts": [{"text": prompt}]}],
-        "generationConfig": {"maxOutputTokens": max_tokens},
-    }
-    if system_hint:
-        payload["systemInstruction"] = {"parts": [{"text": system_hint}]}
+    conn = get_db_connection()
     try:
-        async with httpx.AsyncClient(timeout=8.0) as client:
-            r = await client.post(
-                url,
-                headers={"x-goog-api-key": GEMINI_API_KEY, "Content-Type": "application/json"},
-                json=payload,
-            )
-            if r.status_code == 200:
-                data = r.json()
-                candidates = data.get("candidates") or []
-                if candidates:
-                    parts = ((candidates[0].get("content") or {}).get("parts")) or []
-                    text = "".join(p.get("text", "") for p in parts).strip()
-                    if text:
-                        return text
-    except Exception:
-        pass
-    return None
-
-async def _fetch_from_justmeme(client: httpx.AsyncClient, prompt: str = "") -> Optional[tuple]:
-    try:
-        if prompt:
-            r = await client.post("https://justmeme.wtf/api/v1/ai-generate", json={"prompt": prompt}, timeout=5.0)
-            if r.status_code == 200:
-                data = r.json()
-                url = (data.get("image_url") or data.get("url") or data.get("editor_url") or "").strip()
-                top = (data.get("top_text") or "").strip()
-                bottom = (data.get("bottom_text") or "").strip()
-                title = " — ".join([p for p in (top, bottom) if p]) or (data.get("template") or "AI Meme")
-                title = title.replace("|", "-").replace("]", "")
-                if url.startswith("http"):
-                    return (url, title)
-        else:
-            r = await client.get("https://justmeme.wtf/api/v1/random", timeout=4.5)
-            if r.status_code == 200:
-                data = r.json()
-                tpl = data.get("template") or data
-                url = (tpl.get("url") or tpl.get("image_url") or "").strip()
-                title = (tpl.get("name") or tpl.get("title") or "Random Meme").replace("|", "-").replace("]", "")
-                if url.startswith("http"):
-                    return (url, title)
-    except Exception:
-        pass
-    return None
-
-async def _fetch_from_imgflip(client: httpx.AsyncClient) -> List[tuple]:
-    results: List[tuple] = []
-    try:
-        r = await client.get("https://api.imgflip.com/get_memes", timeout=5.0)
-        if r.status_code == 200:
-            payload = r.json()
-            memes = (payload.get("data") or {}).get("memes") or []
-            random.shuffle(memes)
-            for tpl in memes[:12]:
-                tpl_id = str(tpl.get("id") or "")
-                tpl_name = (tpl.get("name") or "Imgflip Meme").replace("|", "-").replace("]", "")
-                tpl_url = (tpl.get("url") or "").strip()
-                if tpl_url.startswith("http"):
-                    TEMPLATE_URL_BUFFER.append((tpl_url, tpl_name))
-
-                top_txt, bot_txt = random.choice(MEME_CAPTIONS)
-                if IMGFLIP_USERNAME and IMGFLIP_PASSWORD and tpl_id:
-                    cap = await client.post(
-                        "https://api.imgflip.com/caption_image",
-                        data={
-                            "template_id": tpl_id,
-                            "username": IMGFLIP_USERNAME,
-                            "password": IMGFLIP_PASSWORD,
-                            "text0": top_txt,
-                            "text1": bot_txt,
-                        },
-                        timeout=6.0,
-                    )
-                    if cap.status_code == 200:
-                        cap_json = cap.json()
-                        captioned_url = ((cap_json.get("data") or {}).get("url") or "").strip()
-                        if cap_json.get("success") and captioned_url.startswith("http"):
-                            results.append((captioned_url, f"{tpl_name}: {top_txt} / {bot_txt}"))
-                            continue
-
-                if tpl_url.startswith("http"):
-                    results.append((tpl_url, f"{tpl_name} — {top_txt}"))
-    except Exception:
-        pass
-    return results
-
-async def _fetch_from_meme_api(client: httpx.AsyncClient) -> List[tuple]:
-    results: List[tuple] = []
-    try:
-        r = await client.get("https://meme-api.com/gimme/15", timeout=4.5)
-        if r.status_code == 200:
-            data = r.json()
-            memes = data.get("memes") or ([data] if isinstance(data, dict) else [])
-            for item in memes:
-                url = (item.get("url") or "").strip()
-                title = (item.get("title") or "Guild Meme").replace("|", "-").replace("]", "").strip()
-                if url.startswith("http"):
-                    results.append((url, title))
-    except Exception:
-        pass
-    return results
-
-async def _gemini_captioned_meme(topic: str) -> Optional[tuple]:
-    if not GEMINI_API_KEY:
-        return None
-    if not TEMPLATE_URL_BUFFER:
-        async with httpx.AsyncClient(timeout=4.5) as client:
-            await _fetch_from_imgflip(client)
-
-    tpl_url, tpl_name = ("", "")
-    while TEMPLATE_URL_BUFFER:
-        cand_url, cand_name = TEMPLATE_URL_BUFFER.popleft()
-        if cand_url not in RECENT_MEME_URLS:
-            tpl_url, tpl_name = cand_url, cand_name
-            break
-
-    if not tpl_url:
-        unused_fb = [m for m in FALLBACK_MEMES if m[0] not in RECENT_MEME_URLS]
-        tpl_url, tpl_name = random.choice(unused_fb if unused_fb else FALLBACK_MEMES)
-
-    subject = topic or "late night coding, gaming lounges, and synced music"
-    caption = await ask_gemini(
-        f"Write a short, punchy meme caption (max 10 words, no quotes, no '|', no ']') for a '{tpl_name}' meme about: {subject}",
-        system_hint="You are MemeBot for C9nnect. Output only a single witty meme caption.",
-        max_tokens=50,
-    )
-    if not caption:
-        return None
-    clean_caption = caption.replace("|", "-").replace("]", "").replace("\n", " ").strip()
-    return (tpl_url, clean_caption)
-
-async def _refill_meme_buffer(topic: str = ""):
-    collected: List[tuple] = []
-    async with httpx.AsyncClient() as client:
-        if topic:
-            ai_meme = await _fetch_from_justmeme(client, prompt=topic)
-            if ai_meme:
-                collected.append(ai_meme)
-            gem_meme = await _gemini_captioned_meme(topic)
-            if gem_meme:
-                collected.append(gem_meme)
-
-        providers = [
-            _fetch_from_meme_api(client),
-            _fetch_from_imgflip(client),
-        ]
-        random.shuffle(providers)
-        for coro in providers:
-            collected.extend(await coro)
-
-        rand_jm = await _fetch_from_justmeme(client, prompt="")
-        if rand_jm:
-            collected.append(rand_jm)
-
-    fresh = [(u, t) for (u, t) in collected if u not in RECENT_MEME_URLS]
-    pool = fresh if fresh else collected
-    random.shuffle(pool)
-    for pair in pool:
-        MEME_BUFFER.append(pair)
-
-    if not MEME_BUFFER:
-        unused_fallbacks = [m for m in FALLBACK_MEMES if m[0] not in RECENT_MEME_URLS]
-        fb_pool = unused_fallbacks if unused_fallbacks else list(FALLBACK_MEMES)
-        random.shuffle(fb_pool)
-        for pair in fb_pool:
-            MEME_BUFFER.append(pair)
-
-async def _fetch_live_meme_token(topic: str = "") -> str:
-    """Integrated helper matching the user's requested _fetch_live_meme_token signature."""
-    if not topic and GEMINI_API_KEY and random.random() < 0.45:
-        gem_random = await _gemini_captioned_meme("")
-        if gem_random:
-            url, title = gem_random
-            RECENT_MEME_URLS.append(url)
-            return f"[MEME_IMG:{url}|{title}]"
-
-    if topic or not MEME_BUFFER:
-        await _refill_meme_buffer(topic=topic)
-
-    attempts = 0
-    while MEME_BUFFER and attempts < 25:
-        attempts += 1
-        url, title = MEME_BUFFER.popleft()
-        if url not in RECENT_MEME_URLS or len(RECENT_MEME_URLS) >= 25:
-            RECENT_MEME_URLS.append(url)
-            return f"[MEME_IMG:{url}|{title}]"
-
-    await _refill_meme_buffer(topic=topic)
-    if MEME_BUFFER:
-        url, title = MEME_BUFFER.popleft()
-        RECENT_MEME_URLS.append(url)
-        return f"[MEME_IMG:{url}|{title}]"
-
-    url, title = random.choice(FALLBACK_MEMES)
-    return f"[MEME_IMG:{url}|{title}]"
-
-def format_rich_message_py(text: str) -> str:
-    """Converts [MEME_IMG:url|title] tokens into HTML image cards in Python."""
-    return re.sub(
-        r"\[MEME_IMG:(https?://[^|\]]+)\|([^\]]+)\]",
-        lambda m: (
-            f'<div class="mt-2 rounded-2xl overflow-hidden border border-amber-400/40 bg-black/50 shadow-lg max-w-[260px]">'
-            f'<img src="{m.group(1)}" alt="{m.group(2)}" loading="lazy" class="w-full max-h-52 object-cover bg-slate-900" />'
-            f'<div class="px-3 py-1.5 text-[11px] font-bold text-amber-200 bg-white/5 border-t border-white/10">{m.group(2)}</div>'
-            f'</div>'
-        ),
-        text or "",
-    )
-
-async def execute_bot_command_py(raw_cmd: str, sender: str = "Wanderer", room: str = "global") -> dict:
-    cmd_text = (raw_cmd or "").strip()
-    lower = cmd_text.lower()
-    arg = cmd_text.split(" ", 1)[1].strip() if " " in cmd_text else ""
-    channel = "#Global"
-
-    events: List[dict] = []
-
-    if lower.startswith(("/meme", "!meme", "-meme")):
-        token = await _fetch_live_meme_token(arg)
-        events.append({
-            "type": "chat_message",
-            "channel": channel,
-            "room": room,
-            "target": room,
-            "sender": "MemeBot",
-            "is_bot": True,
-            "text": token,
-            "html": format_rich_message_py(token),
-        })
-        reply_text = token
-    elif lower.startswith(("/ask", "!ask", "-ask", "/oracle", "!oracle", "-oracle")):
-        ai_reply = await ask_gemini(
-            arg or "Give a mysterious RPG fortune for our squad tonight.",
-            system_hint="You are OracleBot inside C9nnect, a real-time anime & gaming lounge. Reply in 1-2 short, fun sentences.",
-            max_tokens=140,
-        )
-        reply_text = f"🔮 {ai_reply}" if ai_reply else "✨ A rare Archon drop awaits your squad tonight."
-    elif lower.startswith(("/roll", "!roll", "-roll")):
-        roll = random.randint(1, 20)
-        reply_text = f"🎲 {sender} rolled a **{roll}** (d20)!"
-    elif lower.startswith(("/rps", "!rps", "-rps")):
-        choice = random.choice(["Rock 🪨", "Paper 📄", "Scissors ✂️"])
-        reply_text = f"✊ RealmBot picks **{choice}** against {sender}!"
-    elif lower.startswith(("/play", "!play", "-play")):
-        query = arg or "lofi chill beats"
-        api_key = os.getenv("YOUTUBE_API_KEY", "").strip()
-        if api_key:
-            try:
-                url = "https://www.googleapis.com/youtube/v3/search?" + urllib.parse.urlencode({
-                    "part": "snippet", "q": query, "type": "video", "videoEmbeddable": "true", "maxResults": 1, "key": api_key
-                })
-                with urllib.request.urlopen(url, timeout=6) as resp:
-                    data = json.loads(resp.read().decode("utf-8"))
-                item = data["items"][0]
-                vid = item["id"]["videoId"]
-                title = item["snippet"]["title"]
-                reply_text = f"🎵 Now Queued: **{title}** (https://youtu.be/{vid})"
-            except Exception:
-                reply_text = f"🎵 Queued tavern vibe: **{query}**"
-        else:
-            reply_text = f"🎵 Queued tavern vibe: **{query}**"
-    else:
-        reply_text = "🤖 Commands available: `/meme [topic]`, `/roll`, `/rps`, `/play <song>`, `/ask <question>`, `/oracle`"
-
-    if not events:
-        events.append({
-            "type": "message:new",
-            "id": f"bot_{uuid.uuid4().hex[:10]}",
-            "sender": "RealmBot",
-            "target": room,
-            "text": reply_text,
-            "html": format_rich_message_py(reply_text),
-            "ts": time.time(),
-        })
-
-    for ev in events:
-        if room == "global":
-            _record_chat_message(ev)
-            await ws_manager.broadcast_all(ev)
-        else:
-            await ws_manager.broadcast(room, ev)
-
-    return events[0]
-
-def _fetch_all_lounges_sync() -> List[dict]:
-    conn = get_conn()
-    try:
-        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
-            cur.execute("SELECT * FROM tavern_lounges ORDER BY id ASC")
-            rows = cur.fetchall()
-            for r in rows:
-                music = _compute_music_state(
-                    r["id"],
-                    ws_manager.lounge_music_state.get(r["id"]),
-                    fallback_track=r.get("current_track") or "Ancient Tavern Hearth & Rain Synth",
-                    fallback_vid=r.get("video_id") or "",
-                )
-                r["music_state"] = music
-            return rows
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute("SELECT * FROM users WHERE username = %s", (payload["username"],))
+            user = cur.fetchone()
+            if not user:
+                raise HTTPException(status_code=401, detail="User not found")
+            u = dict(user)
+            u.pop("password_hash", None)
+            return u
     finally:
-        release_conn(conn)
+        release_db_connection(conn)
 
-def _remove_member_from_all_lounges(cur, username: str):
-    cur.execute("SELECT id, members FROM tavern_lounges")
-    for other in cur.fetchall():
-        om = list(other["members"] or [])
-        if username in om:
-            om = [m for m in om if m != username]
-            cur.execute(
-                "UPDATE tavern_lounges SET members = %s::jsonb WHERE id = %s",
-                (json.dumps(om), other["id"]),
-            )
 
-# ================= SCHEMAS =================
-class RegisterReq(BaseModel):
-    username: str
-    email: EmailStr
-    password: str
+def compute_level(xp: int) -> int:
+    return max(1, int((max(0, xp) / 100) ** 0.5) + 1)
 
-class LoginReq(BaseModel):
-    email: EmailStr
-    password: str
 
-class VerifyReq(BaseModel):
-    email: EmailStr
-    code: str
+def award_xp_and_coins(conn, username: str, xp_gain: int = 15, coins_gain: int = 10) -> Dict[str, Any]:
+    with conn.cursor(cursor_factory=RealDictCursor) as cur:
+        cur.execute(
+            "SELECT username, xp, level, cowoncy, honor FROM users WHERE username = %s",
+            (username,),
+        )
+        row = cur.fetchone()
+        if not row:
+            return {"leveled_up": False, "level": 1, "xp": 0, "cowoncy": 0}
+        old_level = row["level"] or compute_level(row["xp"] or 0)
+        new_xp = (row["xp"] or 0) + xp_gain
+        new_level = compute_level(new_xp)
+        new_coins = (row["cowoncy"] or 250) + coins_gain
+        cur.execute(
+            """
+            UPDATE users
+            SET xp = %s, level = %s, cowoncy = %s
+            WHERE username = %s
+            RETURNING xp, level, cowoncy, honor
+            """,
+            (new_xp, new_level, new_coins, username),
+        )
+        updated = cur.fetchone()
+        return {
+            "leveled_up": new_level > old_level,
+            "level": updated["level"],
+            "xp": updated["xp"],
+            "cowoncy": updated["cowoncy"],
+            "honor": updated["honor"],
+        }
 
-class ResetReq(BaseModel):
-    email: EmailStr
 
-class ResetConfirmReq(BaseModel):
-    email: EmailStr
-    token: str
-    new_password: str
+def extract_youtube_id(url_or_id: str) -> Optional[str]:
+    text = (url_or_id or "").strip()
+    if re.fullmatch(r"[A-Za-z0-9_-]{11}", text):
+        return text
+    patterns = [
+        r"(?:v=|/v/|/embed/|youtu\.be/|/shorts/|/live/)([A-Za-z0-9_-]{11})",
+    ]
+    for pat in patterns:
+        m = re.search(pat, text)
+        if m:
+            return m.group(1)
+    return None
 
-class ProfileUpdateReq(BaseModel):
-    username: Optional[str] = None
-    affinity: Optional[str] = None
-    bio: Optional[str] = None
-    theme: Optional[str] = None
-    equipped_sticker: Optional[str] = None
-    equipped_deco: Optional[str] = None
 
-class XpReq(BaseModel):
-    amount: int = 5
+def send_email_if_configured(to_email: str, subject: str, body: str):
+    if not SMTP_HOST or not to_email:
+        return
+    try:
+        msg = EmailMessage()
+        msg["Subject"] = subject
+        msg["From"] = SMTP_FROM
+        msg["To"] = to_email
+        msg.set_content(body)
+        with smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=8) as server:
+            server.starttls()
+            if SMTP_USER and SMTP_PASS:
+                server.login(SMTP_USER, SMTP_PASS)
+            server.send_message(msg)
+    except Exception:
+        pass
 
-class FriendRequestReq(BaseModel):
-    username: str
 
-class FriendAcceptReq(BaseModel):
-    requester_uid: str
-
-class ConfessionReq(BaseModel):
-    author_name: str = "Anonymous"
-    sticker: str = "📜"
-    mood: str = "Reflective"
-    text: str
-
-class ReplyReq(BaseModel):
-    author_name: str = "Anonymous"
-    text: str
-
-class MessageReq(BaseModel):
-    target: str
-    text: str
-
-class HonorReq(BaseModel):
-    amount: int = 10
-
-class PollVoteReq(BaseModel):
-    index: int
-
-class LoungeCreateReq(BaseModel):
-    name: str
-    passcode: str = ""
-    host_name: str = "Host"
-
-class LoungeJoinPassReq(BaseModel):
-    lounge_id: str
-    passcode: str = ""
-    username: str = "Guest"
-
-class LoungeMusicSyncReq(BaseModel):
-    lounge_id: str
-    title: str
-    video_id: str = ""
-    station_idx: int = 0
-    is_playing: bool = True
-    position_sec: float = 0.0
-    updated_by: str = "Host"
-
-class BotChatReq(BaseModel):
-    bot_name: str
-    bot_role: str
-    message: str
-
-class StoryDropReq(BaseModel):
-    author_name: str
-    mood: str = "⚔️"
-    text: str
-
-# ================= STATIC PAGES =================
-@app.get("/")
-def serve_home():
-    return FileResponse("index.html")
-
-@app.get("/admin")
-def serve_admin():
-    return FileResponse("admin.html")
-
-@app.get("/health")
-def health():
-    return {"status": "ok", "db_configured": bool(pg_pool), "gemini_enabled": bool(GEMINI_API_KEY)}
-
-@app.get("/api/presence")
-def get_presence():
-    return {
-        "online_users": ws_manager.get_online_users(),
-        "online_count": len(ws_manager.get_online_users()),
-        "lounges": _fetch_all_lounges_sync(),
-        "global_chat_history": GLOBAL_CHAT_HISTORY,
-    }
-
-# ================= AUTH ROUTES =================
-@app.post("/api/auth/register")
-def register(req: RegisterReq):
-    uid = "u_" + uuid.uuid4().hex[:12]
-    code = str(uuid.uuid4().int)[:6]
-    pw_hash = pwd_ctx.hash(req.password)
-    conn = get_conn()
+# ---------------------------------------------------------------------------
+# Database Schema Initialization & Safe Migrations
+# ---------------------------------------------------------------------------
+def init_db():
+    conn = get_db_connection()
     try:
         with conn.cursor() as cur:
-            cur.execute(
-                "INSERT INTO users (uid, username, email, password_hash, verification_code) VALUES (%s, %s, %s, %s, %s)",
-                (uid, req.username.strip(), req.email.lower(), pw_hash, code),
-            )
-    except psycopg2.IntegrityError:
-        raise HTTPException(status_code=400, detail="Username or email already exists")
-    finally:
-        release_conn(conn)
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS users (
+                    id SERIAL PRIMARY KEY,
+                    username VARCHAR(64) UNIQUE NOT NULL,
+                    email VARCHAR(128) UNIQUE,
+                    password_hash TEXT NOT NULL,
+                    is_verified BOOLEAN DEFAULT TRUE,
+                    verification_code VARCHAR(12),
+                    reset_code VARCHAR(12),
+                    bio TEXT DEFAULT 'Exploring the realm.',
+                    affinity VARCHAR(64) DEFAULT 'Aether',
+                    theme VARCHAR(32) DEFAULT 'original',
+                    sticker VARCHAR(32) DEFAULT '✨',
+                    decoration VARCHAR(64) DEFAULT 'none',
+                    role_title VARCHAR(64) DEFAULT 'Voyager',
+                    birthday VARCHAR(16),
+                    captcha_verified BOOLEAN DEFAULT TRUE,
+                    warnings INTEGER DEFAULT 0,
+                    xp INTEGER DEFAULT 0,
+                    level INTEGER DEFAULT 1,
+                    honor INTEGER DEFAULT 100,
+                    daily_honor INTEGER DEFAULT 0,
+                    last_honor_reset VARCHAR(16) DEFAULT '',
+                    cowoncy INTEGER DEFAULT 250,
+                    last_daily_claim VARCHAR(16) DEFAULT '',
+                    invites_count INTEGER DEFAULT 0,
+                    messages_count INTEGER DEFAULT 0,
+                    inventory JSONB DEFAULT '["✨"]'::jsonb,
+                    notes TEXT DEFAULT '',
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                );
+            """)
 
-    send_email_notification(
-        req.email,
-        "Verify your C9nnect Account",
-        f"Welcome to C9nnect, {req.username}!\n\nYour 6-digit verification code is: {code}",
+            # Safe column migrations for existing databases
+            alter_statements = [
+                "ALTER TABLE users ADD COLUMN IF NOT EXISTS role_title VARCHAR(64) DEFAULT 'Voyager'",
+                "ALTER TABLE users ADD COLUMN IF NOT EXISTS birthday VARCHAR(16)",
+                "ALTER TABLE users ADD COLUMN IF NOT EXISTS captcha_verified BOOLEAN DEFAULT TRUE",
+                "ALTER TABLE users ADD COLUMN IF NOT EXISTS warnings INTEGER DEFAULT 0",
+                "ALTER TABLE users ADD COLUMN IF NOT EXISTS cowoncy INTEGER DEFAULT 250",
+                "ALTER TABLE users ADD COLUMN IF NOT EXISTS last_daily_claim VARCHAR(16) DEFAULT ''",
+                "ALTER TABLE users ADD COLUMN IF NOT EXISTS invites_count INTEGER DEFAULT 0",
+                "ALTER TABLE users ADD COLUMN IF NOT EXISTS messages_count INTEGER DEFAULT 0",
+                "ALTER TABLE users ADD COLUMN IF NOT EXISTS inventory JSONB DEFAULT '[\"✨\"]'::jsonb",
+                "ALTER TABLE users ADD COLUMN IF NOT EXISTS notes TEXT DEFAULT ''",
+            ]
+            for stmt in alter_statements:
+                cur.execute(stmt)
+
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS friends (
+                    id SERIAL PRIMARY KEY,
+                    requester VARCHAR(64) NOT NULL,
+                    addressee VARCHAR(64) NOT NULL,
+                    status VARCHAR(20) DEFAULT 'pending',
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE(requester, addressee)
+                );
+            """)
+
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS direct_messages (
+                    id SERIAL PRIMARY KEY,
+                    sender VARCHAR(64) NOT NULL,
+                    recipient VARCHAR(64) NOT NULL,
+                    content TEXT NOT NULL,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                );
+            """)
+
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS chat_messages (
+                    id SERIAL PRIMARY KEY,
+                    room VARCHAR(64) NOT NULL,
+                    sender VARCHAR(64) NOT NULL,
+                    is_bot BOOLEAN DEFAULT FALSE,
+                    bot_name VARCHAR(64),
+                    content TEXT NOT NULL,
+                    meta JSONB DEFAULT '{}'::jsonb,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                );
+            """)
+
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS confessions (
+                    id SERIAL PRIMARY KEY,
+                    author VARCHAR(64) DEFAULT 'Anonymous',
+                    is_anonymous BOOLEAN DEFAULT TRUE,
+                    content TEXT NOT NULL,
+                    likes INTEGER DEFAULT 0,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                );
+            """)
+
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS confession_replies (
+                    id SERIAL PRIMARY KEY,
+                    confession_id INTEGER REFERENCES confessions(id) ON DELETE CASCADE,
+                    author VARCHAR(64) DEFAULT 'Anonymous',
+                    content TEXT NOT NULL,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                );
+            """)
+
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS lounges (
+                    id SERIAL PRIMARY KEY,
+                    name VARCHAR(80) NOT NULL,
+                    topic VARCHAR(160) DEFAULT 'Chill & Listen Together',
+                    theme VARCHAR(32) DEFAULT 'sakura',
+                    creator VARCHAR(64) NOT NULL,
+                    members JSONB DEFAULT '[]'::jsonb,
+                    video_id VARCHAR(32) DEFAULT 'jfKfPfyJRdk',
+                    video_title VARCHAR(160) DEFAULT 'Lofi Hip Hop Radio - Beats to Relax/Study to',
+                    queue JSONB DEFAULT '[]'::jsonb,
+                    is_playing BOOLEAN DEFAULT TRUE,
+                    base_position DOUBLE PRECISION DEFAULT 0.0,
+                    updated_at DOUBLE PRECISION DEFAULT 0.0,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                );
+            """)
+
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS media_state (
+                    channel_key VARCHAR(64) PRIMARY KEY,
+                    video_id VARCHAR(32) DEFAULT 'jfKfPfyJRdk',
+                    title VARCHAR(160) DEFAULT 'Synchronized Stream',
+                    queue JSONB DEFAULT '[]'::jsonb,
+                    is_playing BOOLEAN DEFAULT TRUE,
+                    base_position DOUBLE PRECISION DEFAULT 0.0,
+                    updated_at DOUBLE PRECISION DEFAULT 0.0,
+                    updated_by VARCHAR(64) DEFAULT 'System'
+                );
+            """)
+
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS stories (
+                    id SERIAL PRIMARY KEY,
+                    author VARCHAR(64) NOT NULL,
+                    content TEXT NOT NULL,
+                    mood VARCHAR(32) DEFAULT '✨',
+                    expires_at TIMESTAMP NOT NULL,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                );
+            """)
+
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS polls (
+                    id SERIAL PRIMARY KEY,
+                    question TEXT NOT NULL,
+                    options JSONB NOT NULL,
+                    votes JSONB DEFAULT '{}'::jsonb,
+                    created_by VARCHAR(64) DEFAULT 'Simple Poll Bot',
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                );
+            """)
+
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS guild_boss (
+                    id INTEGER PRIMARY KEY,
+                    name VARCHAR(80) DEFAULT 'Void Sovereign Aetherion',
+                    hp INTEGER DEFAULT 10000,
+                    max_hp INTEGER DEFAULT 10000,
+                    tier INTEGER DEFAULT 1,
+                    last_attacker VARCHAR(64) DEFAULT 'None'
+                );
+            """)
+
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS arcade_scores (
+                    id SERIAL PRIMARY KEY,
+                    game VARCHAR(40) NOT NULL,
+                    username VARCHAR(64) NOT NULL,
+                    score INTEGER NOT NULL,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                );
+            """)
+
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS giveaways (
+                    id SERIAL PRIMARY KEY,
+                    prize VARCHAR(120) NOT NULL,
+                    host VARCHAR(64) NOT NULL,
+                    entries JSONB DEFAULT '[]'::jsonb,
+                    winner VARCHAR(64),
+                    ends_at DOUBLE PRECISION NOT NULL,
+                    active BOOLEAN DEFAULT TRUE
+                );
+            """)
+
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS tickets (
+                    id SERIAL PRIMARY KEY,
+                    creator VARCHAR(64) NOT NULL,
+                    reason TEXT NOT NULL,
+                    status VARCHAR(20) DEFAULT 'open',
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                );
+            """)
+
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS bot_tags (
+                    name VARCHAR(40) PRIMARY KEY,
+                    response TEXT NOT NULL,
+                    author VARCHAR(64) NOT NULL
+                );
+            """)
+
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS counting_state (
+                    id INTEGER PRIMARY KEY,
+                    current_count INTEGER DEFAULT 0,
+                    high_score INTEGER DEFAULT 0,
+                    last_user VARCHAR(64) DEFAULT ''
+                );
+            """)
+
+            # Seed defaults if empty
+            cur.execute("SELECT id FROM guild_boss WHERE id = 1")
+            if not cur.fetchone():
+                cur.execute(
+                    "INSERT INTO guild_boss (id, name, hp, max_hp, tier) VALUES (1, 'Void Sovereign Aetherion', 10000, 10000, 1)"
+                )
+
+            cur.execute("SELECT id FROM counting_state WHERE id = 1")
+            if not cur.fetchone():
+                cur.execute(
+                    "INSERT INTO counting_state (id, current_count, high_score, last_user) VALUES (1, 0, 0, '')"
+                )
+
+            cur.execute("SELECT channel_key FROM media_state WHERE channel_key = 'entertainment'")
+            if not cur.fetchone():
+                cur.execute(
+                    """
+                    INSERT INTO media_state (channel_key, video_id, title, queue, is_playing, base_position, updated_at, updated_by)
+                    VALUES ('entertainment', 'jfKfPfyJRdk', 'Lofi Hip Hop Radio - Chill Beats', '[]'::jsonb, TRUE, 0.0, %s, 'System')
+                    """,
+                    (now_ts(),),
+                )
+
+            cur.execute("SELECT COUNT(*) FROM lounges")
+            if cur.fetchone()[0] == 0:
+                ts = now_ts()
+                default_lounges = [
+                    ("Sakura Shrine Lounge", "Cherry blossoms, lofi & late-night talks", "sakura", "System", '["System"]', "5qap5aO4i9A", "Lofi Hip Hop Radio - Beats to Sleep/Chill to", ts),
+                    ("Neon Nightcore & Cinema", "Synchronized watchparty & synthwave", "cyberpunk", "System", '["System"]', "jfKfPfyJRdk", "Lofi Hip Hop Radio - Chill Session", ts),
+                    ("Ancient Ruins Campfire", "Cozy acoustic & guild strategy", "ruins", "System", '["System"]', "4xDzrJKXOOY", "Synthwave Radio - Beats to Chill/Game to", ts),
+                ]
+                for name, topic, theme, creator, members, vid, title, t in default_lounges:
+                    cur.execute(
+                        """
+                        INSERT INTO lounges (name, topic, theme, creator, members, video_id, video_title, is_playing, base_position, updated_at)
+                        VALUES (%s, %s, %s, %s, %s::jsonb, %s, %s, TRUE, 0.0, %s)
+                        """,
+                        (name, topic, theme, creator, members, vid, title, t),
+                    )
+
+            conn.commit()
+    finally:
+        release_db_connection(conn)
+
+
+@app.on_event("startup")
+def on_startup():
+    if DATABASE_URL:
+        init_db()
+
+
+# ---------------------------------------------------------------------------
+# Bot Engine (AetherBot, MEE6, ProBot, OwO, Counting, Giveaway, Ticket, etc.)
+# ---------------------------------------------------------------------------
+async def ask_gemini_or_fallback(prompt: str, username: str) -> str:
+    if GEMINI_API_KEY:
+        try:
+            url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={GEMINI_API_KEY}"
+            payload = {
+                "contents": [
+                    {
+                        "parts": [
+                            {
+                                "text": (
+                                    f"You are AetherBot, a helpful, witty social & gaming hub assistant talking to {username}. "
+                                    f"Keep replies concise (under 120 words) and fun.\n\nUser prompt: {prompt}"
+                                )
+                            }
+                        ]
+                    }
+                ]
+            }
+            async with httpx.AsyncClient(timeout=12.0) as client:
+                resp = await client.post(url, json=payload)
+                if resp.status_code == 200:
+                    data = resp.json()
+                    parts = (
+                        data.get("candidates", [{}])[0]
+                        .get("content", {})
+                        .get("parts", [])
+                    )
+                    if parts and parts[0].get("text"):
+                        return parts[0]["text"].strip()
+        except Exception:
+            pass
+
+    fallback_replies = [
+        f"✨ AetherBot hears you, **{username}**! Try `/help` to see MEE6 ranks, OwO hunts, giveaways, tickets, polls, and synchronized music lounges.",
+        f"🔮 The Aether whispers to **{username}**: synchronize your lounge, claim `/daily` cowoncy, or challenge the Guild Boss!",
+        f"⚡ AetherBot online! Ask me anything or test `owo hunt`, `/rank`, `/poll`, `/gstart`, or `/ticket`.",
+    ]
+    return random.choice(fallback_replies)
+
+
+def build_help_text() -> str:
+    return (
+        "**🤖 Bot Command Suite (MEE6 • ProBot • OwO • AetherBot • Mod & Utility)**\n"
+        "• **AetherBot:** `/ask <question>` or `/oracle <question>`\n"
+        "• **MEE6 & ProBot:** `/rank [user]`, `/level`, `/leaderboard`, `/stats`\n"
+        "• **OwO Bot:** `owo hunt`, `owo battle`, `owo daily`, `owo cash`, `owo slots <amount>`\n"
+        "• **GiveawayBot:** `/gstart <seconds> <prize>` or `/gend <id>`\n"
+        "• **Ticket Tool:** `/ticket <reason>` or `/close <id>`\n"
+        "• **Reaction Roles & Captcha:** `/roles <Voyager|Strategist|Bard|Guardian>`, `/captcha`\n"
+        "• **Dyno / Carl-bot / Wick:** `/warn <user> <reason>`, `/tag set <name> <reply>`, `/tag <name>`\n"
+        "• **Simple Poll & Birthday:** `/poll <Question | Opt1 | Opt2 | Opt3>`, `/birthday <MM-DD>`\n"
+        "• **Fun & Music:** `/roll [max]`, `/rps <rock|paper|scissors>`, `/meme`, `/play <youtube_url_or_id>`"
     )
-    return {"token": create_token(uid, req.username), "uid": uid, "username": req.username, "email_verified": False}
+
+
+async def process_bot_command(conn, room: str, username: str, raw_text: str) -> Optional[List[Dict[str, Any]]]:
+    """
+    Returns a list of bot message payloads to broadcast if raw_text is a bot command
+    or a special room trigger (like counting). Returns None for normal chat messages.
+    """
+    text = raw_text.strip()
+    lower = text.lower()
+    bot_replies: List[Dict[str, Any]] = []
+
+    def add_bot(bot_name: str, content: str, extra: Optional[Dict[str, Any]] = None):
+        meta = extra or {}
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute(
+                """
+                INSERT INTO chat_messages (room, sender, is_bot, bot_name, content, meta)
+                VALUES (%s, %s, TRUE, %s, %s, %s::jsonb)
+                RETURNING id, room, sender, is_bot, bot_name, content, meta, created_at
+                """,
+                (room, bot_name, bot_name, content, json.dumps(meta)),
+            )
+            row = dict(cur.fetchone())
+        bot_replies.append(row)
+
+    # Counting Bot auto-check in counting rooms
+    if "count" in room.lower() and not text.startswith("/") and not lower.startswith("owo "):
+        stripped_num = text.strip()
+        if stripped_num.isdigit():
+            val = int(stripped_num)
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute("SELECT * FROM counting_state WHERE id = 1")
+                st = dict(cur.fetchone())
+                expected = st["current_count"] + 1
+                if val == expected and st["last_user"] != username:
+                    new_high = max(st["high_score"], val)
+                    cur.execute(
+                        "UPDATE counting_state SET current_count = %s, high_score = %s, last_user = %s WHERE id = 1",
+                        (val, new_high, username),
+                    )
+                    award_xp_and_coins(conn, username, xp_gain=5, coins_gain=5)
+                else:
+                    reason = (
+                        "same user posted twice in a row!"
+                        if st["last_user"] == username
+                        else f"expected **{expected}**, got **{val}**!"
+                    )
+                    cur.execute(
+                        "UPDATE counting_state SET current_count = 0, last_user = '' WHERE id = 1"
+                    )
+                    add_bot(
+                        "Counting Bot",
+                        f"💥 Streak broken by **@{username}** ({reason}) Reset back to **0**! Best record: **{st['high_score']}**.",
+                    )
+            return bot_replies
+
+    # OwO Bot commands
+    if lower.startswith("owo ") or lower == "owo":
+        parts = text.split()
+        sub = parts[1].lower() if len(parts) > 1 else "help"
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute("SELECT cowoncy, last_daily_claim, xp, level FROM users WHERE username = %s", (username,))
+            u = cur.fetchone()
+            if not u:
+                return None
+            coins = u["cowoncy"] or 250
+
+            if sub == "daily":
+                today_str = now_utc().strftime("%Y-%m-%d")
+                if u["last_daily_claim"] == today_str:
+                    add_bot("OwO Bot", f"⏳ **@{username}**, you already claimed your daily **250 Cowoncy** today!")
+                else:
+                    new_c = coins + 250
+                    cur.execute(
+                        "UPDATE users SET cowoncy = %s, last_daily_claim = %s WHERE username = %s",
+                        (new_c, today_str, username),
+                    )
+                    add_bot("OwO Bot", f"🎁 **@{username}** claimed **+250 Cowoncy**! Balance: **{new_c}**.")
+            elif sub in ("cash", "bal", "balance"):
+                target = parts[2].lstrip("@") if len(parts) > 2 else username
+                cur.execute("SELECT cowoncy FROM users WHERE username = %s", (target,))
+                t_row = cur.fetchone()
+                c_val = t_row["cowoncy"] if t_row else coins
+                add_bot("OwO Bot", f"💳 **@{target}** currently holds **{c_val} Cowoncy**.")
+            elif sub == "hunt":
+                cost = 25
+                if coins < cost:
+                    add_bot("OwO Bot", f"❌ Need at least **{cost} Cowoncy** to hunt! Try `owo daily`.")
+                else:
+                    creatures = [
+                        ("🦊 Kitsune", 65),
+                        ("🐉 Mini Drake", 95),
+                        ("🦉 Moon Owl", 50),
+                        ("🦄 Starlight Unicorn", 140),
+                        ("🐾 Stray Cat", 35),
+                    ]
+                    caught, reward = random.choice(creatures)
+                    new_c = coins - cost + reward
+                    cur.execute("UPDATE users SET cowoncy = %s WHERE username = %s", (new_c, username))
+                    add_bot(
+                        "OwO Bot",
+                        f"🏹 **@{username}** spent 25 and caught {caught} (**+{reward} Cowoncy**)! Balance: **{new_c}**.",
+                    )
+            elif sub == "battle":
+                win = random.random() >= 0.45
+                delta = random.randint(40, 110) if win else -min(coins, 35)
+                new_c = max(0, coins + delta)
+                cur.execute("UPDATE users SET cowoncy = %s WHERE username = %s", (new_c, username))
+                if win:
+                    add_bot("OwO Bot", f"⚔️ **@{username}** won the OwO duel and earned **+{delta} Cowoncy**! Balance: **{new_c}**.")
+                else:
+                    add_bot("OwO Bot", f"💀 **@{username}** lost the duel (**{delta} Cowoncy**). Balance: **{new_c}**.")
+            elif sub in ("slots", "s"):
+                bet = int(parts[2]) if len(parts) > 2 and parts[2].isdigit() else 50
+                bet = max(10, min(bet, coins))
+                if coins < 10:
+                    add_bot("OwO Bot", f"❌ Not enough Cowoncy to spin slots! Try `owo daily`.")
+                else:
+                    syms = ["🍒", "🍋", "💎", "7️⃣", "🌸"]
+                    reels = [random.choice(syms) for _ in range(3)]
+                    if reels[0] == reels[1] == reels[2]:
+                        payout = bet * 4
+                        new_c = coins + payout
+                        msg = f"🎰 `[ {' | '.join(reels)} ]` JACKPOT! **@{username}** won **+{payout} Cowoncy**! (Bal: **{new_c}**)"
+                    elif reels[0] == reels[1] or reels[1] == reels[2]:
+                        payout = bet
+                        new_c = coins + payout
+                        msg = f"🎰 `[ {' | '.join(reels)} ]` Nice pair! **@{username}** won **+{payout} Cowoncy**! (Bal: **{new_c}**)"
+                    else:
+                        new_c = coins - bet
+                        msg = f"🎰 `[ {' | '.join(reels)} ]` **@{username}** lost **{bet} Cowoncy**. (Bal: **{new_c}**)"
+                    cur.execute("UPDATE users SET cowoncy = %s WHERE username = %s", (new_c, username))
+                    add_bot("OwO Bot", msg)
+            else:
+                add_bot("OwO Bot", "🐾 Try `owo daily`, `owo hunt`, `owo battle`, `owo cash`, or `owo slots <bet>`.")
+        return bot_replies
+
+    # Slash commands
+    if not text.startswith("/"):
+        return None
+
+    parts = text.split()
+    cmd = parts[0].lower()
+
+    if cmd == "/help":
+        add_bot("AetherBot", build_help_text())
+
+    elif cmd in ("/ask", "/oracle"):
+        question = text[len(parts[0]):].strip() or "Give me a quick tip for today."
+        bot_label = "AetherBot" if cmd == "/ask" else "Oracle Bot"
+        reply = await ask_gemini_or_fallback(question, username)
+        add_bot(bot_label, f"**@{username}:** {reply}")
+
+    elif cmd in ("/rank", "/level"):
+        target = parts[1].lstrip("@") if len(parts) > 1 else username
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute(
+                "SELECT username, xp, level, honor, role_title, messages_count FROM users WHERE username = %s",
+                (target,),
+            )
+            row = cur.fetchone()
+            if not row:
+                add_bot("MEE6", f"❌ User **@{target}** not found.")
+            else:
+                lvl = compute_level(row["xp"] or 0)
+                next_xp = (lvl ** 2) * 100
+                add_bot(
+                    "MEE6",
+                    f"📊 **Rank Card — @{row['username']}** (`{row['role_title'] or 'Voyager'}`)\n"
+                    f"• **Level:** {lvl} | **XP:** {row['xp']} / {next_xp}\n"
+                    f"• **Honor:** {row['honor']} | **Messages:** {row['messages_count']}",
+                )
+
+    elif cmd == "/leaderboard":
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute("SELECT username, xp, honor, cowoncy FROM users ORDER BY xp DESC LIMIT 5")
+            rows = cur.fetchall()
+        lines = ["🏆 **Top Members (ProBot & MEE6)**"]
+        for idx, r in enumerate(rows, start=1):
+            lines.append(
+                f"{idx}. **@{r['username']}** — {r['xp']} XP • {r['honor']} Honor • {r['cowoncy']} Cowoncy"
+            )
+        add_bot("ProBot", "\n".join(lines))
+
+    elif cmd == "/stats":
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            total_users = cur.execute("SELECT COUNT(*) FROM users") or None
+            cur.execute("SELECT COUNT(*) AS c FROM users")
+            u_cnt = cur.fetchone()["c"]
+            cur.execute("SELECT COUNT(*) AS c FROM chat_messages")
+            m_cnt = cur.fetchone()["c"]
+            cur.execute("SELECT COUNT(*) AS c FROM lounges")
+            l_cnt = cur.fetchone()["c"]
+        add_bot(
+            "Statbot",
+            f"📈 **Server Pulse:** **{u_cnt}** members • **{m_cnt}** total messages • **{l_cnt}** lounges • **{len(manager.online_users)}** tracked online.",
+        )
+
+    elif cmd == "/roll":
+        max_val = int(parts[1]) if len(parts) > 1 and parts[1].isdigit() else 100
+        max_val = max(2, min(max_val, 1_000_000))
+        rolled = random.randint(1, max_val)
+        add_bot("Carl-bot", f"🎲 **@{username}** rolled **{rolled}** (1–{max_val}).")
+
+    elif cmd == "/rps":
+        choices = ["rock", "paper", "scissors"]
+        pick = parts[1].lower() if len(parts) > 1 else random.choice(choices)
+        if pick not in choices:
+            pick = random.choice(choices)
+        bot_pick = random.choice(choices)
+        wins = {("rock", "scissors"), ("paper", "rock"), ("scissors", "paper")}
+        if pick == bot_pick:
+            outcome = "It's a tie!"
+        elif (pick, bot_pick) in wins:
+            outcome = f"**@{username}** wins!"
+        else:
+            outcome = "Carl-bot wins!"
+        add_bot("Carl-bot", f"✊ **@{username}** chose **{pick}** vs Carl-bot's **{bot_pick}** — {outcome}")
+
+    elif cmd == "/meme":
+        memes = [
+            "😂 *When your WebSocket finally syncs on the first try after 47 refreshes.*",
+            "🤣 *Me: 'I'll just add one small bot.' Also me: 14 Discord bots at 3 AM.*",
+            "😹 *Synchronized music room: everyone vibes to the exact same beat!*",
+        ]
+        meme_text = random.choice(memes)
+        meme_img = None
+        try:
+            async with httpx.AsyncClient(timeout=5.0) as client:
+                r = await client.get("https://meme-api.com/gimme")
+                if r.status_code == 200:
+                    data = r.json()
+                    meme_text = f"😂 **{data.get('title', 'Fresh Meme')}** — r/{data.get('subreddit', 'memes')}"
+                    meme_img = data.get("url")
+        except Exception:
+            pass
+        add_bot("Dyno", meme_text, {"image_url": meme_img} if meme_img else {})
+
+    elif cmd == "/play":
+        query_str = text[len(parts[0]):].strip()
+        vid = extract_youtube_id(query_str)
+        if vid:
+            ts = now_ts()
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    UPDATE media_state
+                    SET video_id = %s, title = %s, is_playing = TRUE, base_position = 0.0, updated_at = %s, updated_by = %s
+                    WHERE channel_key = 'entertainment'
+                    """,
+                    (vid, f"YouTube Track ({vid})", ts, username),
+                )
+            await manager.broadcast(
+                "global",
+                {
+                    "type": "media_sync",
+                    "channel_key": "entertainment",
+                    "video_id": vid,
+                    "title": f"YouTube Track ({vid})",
+                    "is_playing": True,
+                    "base_position": 0.0,
+                    "updated_at": ts,
+                    "updated_by": username,
+                },
+            )
+            add_bot("AetherBot", f"🎵 **@{username}** started synchronized playback: `{vid}`!")
+        else:
+            add_bot("AetherBot", "🎧 Usage: `/play <YouTube URL or 11-char Video ID>` to sync playback for everyone.")
+
+    elif cmd == "/gstart":
+        sec = int(parts[1]) if len(parts) > 1 and parts[1].isdigit() else 120
+        sec = max(15, min(sec, 86400))
+        prize = " ".join(parts[2:]).strip() if len(parts) > 2 else "500 Cowoncy + VIP Badge"
+        ends = now_ts() + sec
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute(
+                """
+                INSERT INTO giveaways (prize, host, entries, ends_at, active)
+                VALUES (%s, %s, '[]'::jsonb, %s, TRUE)
+                RETURNING id
+                """,
+                (prize, username, ends),
+            )
+            gid = cur.fetchone()["id"]
+        add_bot(
+            "GiveawayBot",
+            f"🎉 **GIVEAWAY #{gid} STARTED!** Prize: **{prize}** | Hosted by **@{username}** | Ends in **{sec}s**!",
+            {"giveaway_id": gid, "prize": prize, "ends_at": ends},
+        )
+
+    elif cmd == "/gend":
+        gid = int(parts[1]) if len(parts) > 1 and parts[1].isdigit() else None
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            if gid:
+                cur.execute("SELECT * FROM giveaways WHERE id = %s AND active = TRUE", (gid,))
+            else:
+                cur.execute("SELECT * FROM giveaways WHERE active = TRUE ORDER BY id DESC LIMIT 1")
+            gw = cur.fetchone()
+            if not gw:
+                add_bot("GiveawayBot", "ℹ️ No active giveaway found to end.")
+            else:
+                entries = gw["entries"] or []
+                winner = random.choice(entries) if entries else None
+                cur.execute(
+                    "UPDATE giveaways SET active = FALSE, winner = %s WHERE id = %s",
+                    (winner, gw["id"]),
+                )
+                if winner:
+                    award_xp_and_coins(conn, winner, xp_gain=50, coins_gain=200)
+                    add_bot("GiveawayBot", f"🎊 Giveaway **#{gw['id']}** (**{gw['prize']}**) ended! Winner: **@{winner}** (+200 Cowoncy)!")
+                else:
+                    add_bot("GiveawayBot", f"ℹ️ Giveaway **#{gw['id']}** ended with no entries.")
+
+    elif cmd == "/ticket":
+        reason = text[len(parts[0]):].strip() or "General support request"
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute(
+                "INSERT INTO tickets (creator, reason, status) VALUES (%s, %s, 'open') RETURNING id",
+                (username, reason),
+            )
+            tid = cur.fetchone()["id"]
+        add_bot("Ticket Tool", f"🎫 Ticket **#{tid}** opened by **@{username}**: *{reason}*. Use `/close {tid}` when resolved.")
+
+    elif cmd == "/close":
+        tid = int(parts[1]) if len(parts) > 1 and parts[1].isdigit() else None
+        with conn.cursor() as cur:
+            if tid:
+                cur.execute("UPDATE tickets SET status = 'closed' WHERE id = %s", (tid,))
+            else:
+                cur.execute("UPDATE tickets SET status = 'closed' WHERE creator = %s AND status = 'open'", (username,))
+        add_bot("Ticket Tool", f"🔒 Ticket closed by **@{username}**.")
+
+    elif cmd == "/roles":
+        allowed = {"voyager", "strategist", "bard", "guardian", "streamer"}
+        chosen = parts[1].lower() if len(parts) > 1 else ""
+        if chosen in allowed:
+            title_cap = chosen.capitalize()
+            with conn.cursor() as cur:
+                cur.execute("UPDATE users SET role_title = %s WHERE username = %s", (title_cap, username))
+            add_bot("Reaction Roles", f"🏷️ **@{username}** equipped the **{title_cap}** role!")
+        else:
+            add_bot("Reaction Roles", "🏷️ Available roles: `/roles Voyager`, `/roles Strategist`, `/roles Bard`, `/roles Guardian`, `/roles Streamer`.")
+
+    elif cmd == "/captcha":
+        a, b = random.randint(2, 9), random.randint(2, 9)
+        with conn.cursor() as cur:
+            cur.execute("UPDATE users SET captcha_verified = TRUE WHERE username = %s", (username,))
+        add_bot("Captcha.bot", f"🛡️ **@{username}** passed verification (`{a} + {b} = {a + b}`)! Access granted.")
+
+    elif cmd == "/warn":
+        if len(parts) < 2:
+            add_bot("Wick", "⚠️ Usage: `/warn <username> [reason]`")
+        else:
+            target = parts[1].lstrip("@")
+            reason = " ".join(parts[2:]).strip() or "Rule violation"
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute(
+                    "UPDATE users SET warnings = COALESCE(warnings, 0) + 1 WHERE username = %s RETURNING warnings",
+                    (target,),
+                )
+                w_row = cur.fetchone()
+            if w_row:
+                add_bot("Wick", f"🚨 **@{target}** received a warning (#{w_row['warnings']}) from **@{username}**: *{reason}*.")
+            else:
+                add_bot("Wick", f"❌ Target **@{target}** not found.")
+
+    elif cmd == "/tag":
+        if len(parts) >= 4 and parts[1].lower() == "set":
+            tag_name = parts[2].lower()
+            tag_body = text.split(parts[2], 1)[1].strip()
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    INSERT INTO bot_tags (name, response, author)
+                    VALUES (%s, %s, %s)
+                    ON CONFLICT (name) DO UPDATE SET response = EXCLUDED.response, author = EXCLUDED.author
+                    """,
+                    (tag_name, tag_body, username),
+                )
+            add_bot("Carl-bot", f"📌 Saved tag `{tag_name}` by **@{username}**.")
+        elif len(parts) >= 2:
+            tag_name = parts[1].lower()
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute("SELECT response FROM bot_tags WHERE name = %s", (tag_name,))
+                t_row = cur.fetchone()
+            if t_row:
+                add_bot("Carl-bot", f"📌 **{tag_name}:** {t_row['response']}")
+            else:
+                add_bot("Carl-bot", f"❓ Unknown tag `{tag_name}`. Create one with `/tag set {tag_name} <message>`.")
+        else:
+            add_bot("Carl-bot", "📌 Usage: `/tag set <name> <reply>` or `/tag <name>`.")
+
+    elif cmd == "/poll":
+        raw_poll = text[len(parts[0]):].strip()
+        chunks = [c.strip() for c in raw_poll.split("|") if c.strip()]
+        if len(chunks) >= 3:
+            q_text = chunks[0]
+            opts = chunks[1:6]
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute(
+                    "INSERT INTO polls (question, options, votes, created_by) VALUES (%s, %s::jsonb, '{}'::jsonb, %s) RETURNING id",
+                    (q_text, json.dumps(opts), username),
+                )
+                pid = cur.fetchone()["id"]
+            add_bot("Simple Poll", f"📊 **Poll #{pid}:** {q_text}\nOptions: " + " • ".join(f"**{o}**" for o in opts))
+        else:
+            add_bot("Simple Poll", "📊 Usage: `/poll Question | Option 1 | Option 2 | Option 3`")
+
+    elif cmd == "/birthday":
+        bday = parts[1].strip() if len(parts) > 1 else ""
+        if re.fullmatch(r"(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])", bday):
+            with conn.cursor() as cur:
+                cur.execute("UPDATE users SET birthday = %s WHERE username = %s", (bday, username))
+            add_bot("Birthday Bot", f"🎂 Saved **@{username}**'s birthday as **{bday}**!")
+        else:
+            add_bot("Birthday Bot", "🎂 Usage: `/birthday MM-DD` (example: `/birthday 07-14`).")
+
+    else:
+        add_bot("AetherBot", f"🤔 Unknown command `{cmd}`. Type `/help` to view all bot commands.")
+
+    return bot_replies
+
+
+# ---------------------------------------------------------------------------
+# Pydantic Models
+# ---------------------------------------------------------------------------
+class RegisterReq(BaseModel):
+    username: str = Field(..., min_length=2, max_length=40)
+    email: Optional[str] = None
+    password: str = Field(..., min_length=4)
+    birthday: Optional[str] = None
+
+
+class LoginReq(BaseModel):
+    username: str
+    password: str
+
+
+class VerifyReq(BaseModel):
+    username: str
+    code: str
+
+
+class ResetReq(BaseModel):
+    username: str
+    code: Optional[str] = None
+    new_password: Optional[str] = None
+
+
+class ProfileUpdateReq(BaseModel):
+    bio: Optional[str] = None
+    affinity: Optional[str] = None
+    theme: Optional[str] = None
+    sticker: Optional[str] = None
+    decoration: Optional[str] = None
+    role_title: Optional[str] = None
+    notes: Optional[str] = None
+
+
+class FriendActionReq(BaseModel):
+    target_username: str
+    action: str = "request"  # request | accept | decline
+
+
+class DmSendReq(BaseModel):
+    recipient: str
+    content: str = Field(..., min_length=1, max_length=2000)
+
+
+class ChatPostReq(BaseModel):
+    room: str = "global"
+    content: str = Field(..., min_length=1, max_length=2000)
+
+
+class ConfessionCreateReq(BaseModel):
+    content: str = Field(..., min_length=1, max_length=2000)
+    is_anonymous: bool = True
+
+
+class ConfessionReplyReq(BaseModel):
+    content: str = Field(..., min_length=1, max_length=1000)
+    is_anonymous: bool = False
+
+
+class LoungeCreateReq(BaseModel):
+    name: str = Field(..., min_length=2, max_length=80)
+    topic: str = "Hangout & Music"
+    theme: str = "sakura"
+    video_url_or_id: Optional[str] = "jfKfPfyJRdk"
+
+
+class MediaSyncReq(BaseModel):
+    channel_key: str = "entertainment"
+    lounge_id: Optional[int] = None
+    action: str = "sync"  # play | pause | seek | queue | skip | sync
+    video_url_or_id: Optional[str] = None
+    title: Optional[str] = None
+    position: Optional[float] = None
+
+
+class StoryCreateReq(BaseModel):
+    content: str = Field(..., min_length=1, max_length=300)
+    mood: str = "✨"
+
+
+class PollCreateReq(BaseModel):
+    question: str = Field(..., min_length=2, max_length=300)
+    options: List[str] = Field(..., min_length=2, max_length=6)
+
+
+class PollVoteReq(BaseModel):
+    option_index: int
+
+
+class BossAttackReq(BaseModel):
+    damage: int = Field(default=150, ge=10, le=2000)
+
+
+class ScoreSubmitReq(BaseModel):
+    game: str
+    score: int = Field(..., ge=0)
+
+
+class ShopBuyReq(BaseModel):
+    item_name: str
+    cost: int = Field(..., ge=0)
+
+
+# ---------------------------------------------------------------------------
+# Health, Static & Auth Endpoints
+# ---------------------------------------------------------------------------
+@app.get("/api/health")
+def health():
+    return {
+        "status": "ok",
+        "timestamp": now_utc().isoformat(),
+        "online_users": len(manager.online_users),
+    }
+
+
+@app.get("/")
+def serve_index():
+    if os.path.exists("index.html"):
+        return FileResponse("index.html")
+    return JSONResponse({"message": "API running. Place index.html in project root."})
+
+
+@app.get("/admin.html")
+def serve_admin():
+    if os.path.exists("admin.html"):
+        return FileResponse("admin.html")
+    raise HTTPException(status_code=404, detail="admin.html not found")
+
+
+@app.post("/api/auth/register")
+def register(req: RegisterReq):
+    clean_user = re.sub(r"[^A-Za-z0-9_-]", "", req.username.strip())
+    if len(clean_user) < 2:
+        raise HTTPException(status_code=400, detail="Username must be at least 2 alphanumeric characters")
+
+    code = f"{random.randint(100000, 999999)}"
+    pw_hash = hash_password(req.password)
+
+    conn = get_db_connection()
+    try:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute("SELECT id FROM users WHERE LOWER(username) = LOWER(%s)", (clean_user,))
+            if cur.fetchone():
+                raise HTTPException(status_code=400, detail="Username already taken")
+
+            if req.email:
+                cur.execute("SELECT id FROM users WHERE LOWER(email) = LOWER(%s)", (req.email.strip(),))
+                if cur.fetchone():
+                    raise HTTPException(status_code=400, detail="Email already registered")
+
+            cur.execute(
+                """
+                INSERT INTO users (username, email, password_hash, verification_code, is_verified, birthday, xp, level, honor, cowoncy)
+                VALUES (%s, %s, %s, %s, TRUE, %s, 25, 1, 100, 250)
+                RETURNING id, username, email, bio, affinity, theme, sticker, decoration, role_title, xp, level, honor, cowoncy, inventory
+                """,
+                (clean_user, req.email.strip() if req.email else None, pw_hash, code, req.birthday),
+            )
+            user = dict(cur.fetchone())
+            # Welcomer message in global chat
+            cur.execute(
+                """
+                INSERT INTO chat_messages (room, sender, is_bot, bot_name, content)
+                VALUES ('global', 'Welcomer', TRUE, 'Welcomer', %s)
+                """,
+                (f"🎉 Welcome **@{clean_user}** to the realm! Say hi or type `/help` to explore bots.",),
+            )
+            conn.commit()
+
+        if req.email:
+            send_email_if_configured(req.email, "Your Verification Code", f"Code: {code}")
+
+        token = create_access_token({"username": clean_user})
+        return {"token": token, "user": user, "verification_code": code}
+    finally:
+        release_db_connection(conn)
+
 
 @app.post("/api/auth/login")
 def login(req: LoginReq):
-    conn = get_conn()
+    conn = get_db_connection()
     try:
-        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
-            cur.execute("SELECT * FROM users WHERE email = %s", (req.email.lower(),))
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute(
+                "SELECT * FROM users WHERE LOWER(username) = LOWER(%s) OR LOWER(email) = LOWER(%s)",
+                (req.username.strip(), req.username.strip()),
+            )
             user = cur.fetchone()
+            if not user or not verify_password(req.password, user["password_hash"]):
+                raise HTTPException(status_code=401, detail="Invalid credentials")
+
+            token = create_access_token({"username": user["username"]})
+            u = dict(user)
+            u.pop("password_hash", None)
+            manager.online_users[user["username"]] = now_ts()
+            return {"token": token, "user": u}
     finally:
-        release_conn(conn)
-    if not user or not pwd_ctx.verify(req.password, user["password_hash"]):
-        raise HTTPException(status_code=401, detail="Invalid email or password")
-    return {
-        "token": create_token(user["uid"], user["username"]),
-        "uid": user["uid"],
-        "username": user["username"],
-        "email_verified": bool(user["email_verified"]),
-        "honor": user["honor"],
-        "daily_honor": user["daily_honor"],
-        "xp": user["xp"],
-        "level": user["level"],
-        "bio": user["bio"],
-        "affinity": user["affinity"],
-        "theme": user["theme"],
-        "equipped_sticker": user["equipped_sticker"],
-        "equipped_deco": user["equipped_deco"],
-    }
+        release_db_connection(conn)
+
 
 @app.post("/api/auth/verify")
 def verify_email(req: VerifyReq):
-    conn = get_conn()
+    conn = get_db_connection()
     try:
-        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
-            cur.execute("SELECT id, verification_code FROM users WHERE email = %s", (req.email.lower(),))
-            user = cur.fetchone()
-            if not user or user["verification_code"] != req.code.strip():
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute("SELECT verification_code FROM users WHERE username = %s", (req.username,))
+            row = cur.fetchone()
+            if not row or row["verification_code"] != req.code.strip():
                 raise HTTPException(status_code=400, detail="Invalid verification code")
-            cur.execute("UPDATE users SET email_verified = TRUE WHERE id = %s", (user["id"],))
+            cur.execute("UPDATE users SET is_verified = TRUE WHERE username = %s", (req.username,))
+            conn.commit()
+            return {"verified": True}
     finally:
-        release_conn(conn)
-    return {"ok": True, "email_verified": True}
+        release_db_connection(conn)
+
 
 @app.post("/api/auth/reset-password")
 def reset_password(req: ResetReq):
-    token = uuid.uuid4().hex[:8].upper()
-    conn = get_conn()
+    conn = get_db_connection()
     try:
-        with conn.cursor() as cur:
-            cur.execute("UPDATE users SET reset_token = %s WHERE email = %s", (token, req.email.lower()))
-    finally:
-        release_conn(conn)
-    send_email_notification(req.email, "C9nnect Password Reset", f"Your password reset token is: {token}")
-    return {"ok": True}
-
-@app.post("/api/auth/reset-password/confirm")
-def confirm_reset_password(req: ResetConfirmReq):
-    conn = get_conn()
-    try:
-        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
-            cur.execute("SELECT id, reset_token FROM users WHERE email = %s", (req.email.lower(),))
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute("SELECT id, email FROM users WHERE username = %s", (req.username,))
             user = cur.fetchone()
-            if not user or not user["reset_token"] or user["reset_token"] != req.token.strip().upper():
-                raise HTTPException(status_code=400, detail="Invalid reset token")
-            new_hash = pwd_ctx.hash(req.new_password)
-            cur.execute("UPDATE users SET password_hash = %s, reset_token = NULL WHERE id = %s", (new_hash, user["id"]))
+            if not user:
+                raise HTTPException(status_code=404, detail="User not found")
+            if not req.code or not req.new_password:
+                code = f"{random.randint(100000, 999999)}"
+                cur.execute("UPDATE users SET reset_code = %s WHERE id = %s", (code, user["id"]))
+                conn.commit()
+                if user["email"]:
+                    send_email_if_configured(user["email"], "Password Reset Code", f"Code: {code}")
+                return {"reset_code_sent": True, "demo_code": code}
+            cur.execute("SELECT reset_code FROM users WHERE id = %s", (user["id"],))
+            if cur.fetchone()["reset_code"] != req.code.strip():
+                raise HTTPException(status_code=400, detail="Invalid reset code")
+            cur.execute(
+                "UPDATE users SET password_hash = %s, reset_code = NULL WHERE id = %s",
+                (hash_password(req.new_password), user["id"]),
+            )
+            conn.commit()
+            return {"password_reset": True}
     finally:
-        release_conn(conn)
-    return {"ok": True}
+        release_db_connection(conn)
 
-# ================= USERS, PROFILE, XP & FRIENDS =================
+
+@app.get("/api/me")
+def get_me(current_user: Dict[str, Any] = Depends(get_current_user)):
+    manager.online_users[current_user["username"]] = now_ts()
+    return {
+        "user": current_user,
+        "online_users": sorted(
+            [u for u, ts in manager.online_users.items() if now_ts() - ts < 180]
+        ),
+    }
+
+
+@app.put("/api/profile")
+@app.patch("/api/profile")
+def update_profile(req: ProfileUpdateReq, current_user: Dict[str, Any] = Depends(get_current_user)):
+    updates = []
+    params: List[Any] = []
+    for field in ["bio", "affinity", "theme", "sticker", "decoration", "role_title", "notes"]:
+        val = getattr(req, field)
+        if val is not None:
+            updates.append(f"{field} = %s")
+            params.append(val)
+    if not updates:
+        return {"user": current_user}
+    params.append(current_user["username"])
+    conn = get_db_connection()
+    try:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute(
+                f"UPDATE users SET {', '.join(updates)} WHERE username = %s RETURNING *",
+                tuple(params),
+            )
+            u = dict(cur.fetchone())
+            u.pop("password_hash", None)
+            conn.commit()
+            return {"user": u}
+    finally:
+        release_db_connection(conn)
+
+
+@app.post("/api/shop/buy")
+def buy_shop_item(req: ShopBuyReq, current_user: Dict[str, Any] = Depends(get_current_user)):
+    conn = get_db_connection()
+    try:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute("SELECT cowoncy, inventory FROM users WHERE username = %s", (current_user["username"],))
+            row = cur.fetchone()
+            coins = row["cowoncy"] or 0
+            inv = row["inventory"] or []
+            if req.item_name in inv:
+                return {"cowoncy": coins, "inventory": inv, "already_owned": True}
+            if coins < req.cost:
+                raise HTTPException(status_code=400, detail="Not enough Cowoncy")
+            new_coins = coins - req.cost
+            inv.append(req.item_name)
+            cur.execute(
+                "UPDATE users SET cowoncy = %s, inventory = %s::jsonb WHERE username = %s",
+                (new_coins, json.dumps(inv), current_user["username"]),
+            )
+            conn.commit()
+            return {"cowoncy": new_coins, "inventory": inv}
+    finally:
+        release_db_connection(conn)
+
+
+# ---------------------------------------------------------------------------
+# Users, Honor, Friends & Real-Time DMs
+# ---------------------------------------------------------------------------
 @app.get("/api/users")
-def list_users():
-    conn = get_conn()
+def list_users(current_user: Dict[str, Any] = Depends(get_current_user)):
+    conn = get_db_connection()
     try:
-        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
-            cur.execute("SELECT uid, username, honor, level, xp, equipped_sticker, equipped_deco FROM users ORDER BY honor DESC LIMIT 50")
-            return cur.fetchall()
-    finally:
-        release_conn(conn)
-
-@app.patch("/api/users/me")
-def update_profile(req: ProfileUpdateReq, user=Depends(get_current_user)):
-    conn = get_conn()
-    try:
-        with conn.cursor() as cur:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
             cur.execute(
-                """
-                UPDATE users SET
-                  username = COALESCE(%s, username),
-                  affinity = COALESCE(%s, affinity),
-                  bio = COALESCE(%s, bio),
-                  theme = COALESCE(%s, theme),
-                  equipped_sticker = COALESCE(%s, equipped_sticker),
-                  equipped_deco = COALESCE(%s, equipped_deco)
-                WHERE uid = %s
-                """,
-                (req.username, req.affinity, req.bio, req.theme, req.equipped_sticker, req.equipped_deco, user["uid"]),
+                "SELECT username, bio, affinity, theme, sticker, decoration, role_title, xp, level, honor, cowoncy FROM users ORDER BY honor DESC LIMIT 100"
             )
+            users = [dict(r) for r in cur.fetchall()]
+            cutoff = now_ts() - 180
+            for u in users:
+                u["online"] = manager.online_users.get(u["username"], 0) >= cutoff
+            return {"users": users}
     finally:
-        release_conn(conn)
-    return {"ok": True}
+        release_db_connection(conn)
 
-@app.post("/api/users/xp")
-def add_xp(req: XpReq, user=Depends(get_current_user)):
-    gain = min(50, max(1, req.amount))
-    conn = get_conn()
-    try:
-        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
-            cur.execute("SELECT xp FROM users WHERE uid = %s", (user["uid"],))
-            row = cur.fetchone()
-            if not row:
-                raise HTTPException(status_code=404, detail="User not found")
-            new_xp = row["xp"] + gain
-            new_level = (new_xp // 100) + 1
-            cur.execute("UPDATE users SET xp = %s, level = %s WHERE uid = %s", (new_xp, new_level, user["uid"]))
-            return {"xp": new_xp, "level": new_level}
-    finally:
-        release_conn(conn)
 
-@app.post("/api/users/honor")
-def add_honor(req: HonorReq, user=Depends(get_current_user)):
-    conn = get_conn()
+@app.post("/api/honor/{target_username}")
+def give_honor(target_username: str, amount: int = 25, current_user: Dict[str, Any] = Depends(get_current_user)):
+    amount = max(1, min(amount, 100))
+    today_str = now_utc().strftime("%Y-%m-%d")
+    conn = get_db_connection()
     try:
-        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
-            cur.execute("SELECT honor, daily_honor, xp FROM users WHERE uid = %s", (user["uid"],))
-            row = cur.fetchone()
-            if not row:
-                raise HTTPException(status_code=404, detail="User not found")
-            remaining = max(0, 500 - row["daily_honor"])
-            gained = min(max(0, req.amount), remaining)
-            new_honor = row["honor"] + gained
-            new_daily = row["daily_honor"] + gained
-            new_xp = row["xp"] + gained
-            new_level = (new_xp // 100) + 1
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
             cur.execute(
-                "UPDATE users SET honor = %s, daily_honor = %s, xp = %s, level = %s WHERE uid = %s",
-                (new_honor, new_daily, new_xp, new_level, user["uid"]),
+                "SELECT daily_honor, last_honor_reset FROM users WHERE username = %s",
+                (current_user["username"],),
             )
-            return {"honor": new_honor, "daily_honor": new_daily, "xp": new_xp, "level": new_level}
+            me = cur.fetchone()
+            used_today = me["daily_honor"] if me["last_honor_reset"] == today_str else 0
+            if used_today + amount > DAILY_HONOR_CAP:
+                raise HTTPException(status_code=400, detail="Daily honor cap (500) reached")
+
+            cur.execute(
+                "UPDATE users SET honor = honor + %s WHERE username = %s RETURNING honor",
+                (amount, target_username),
+            )
+            t_row = cur.fetchone()
+            if not t_row:
+                raise HTTPException(status_code=404, detail="Target user not found")
+
+            cur.execute(
+                "UPDATE users SET daily_honor = %s, last_honor_reset = %s WHERE username = %s",
+                (used_today + amount, today_str, current_user["username"]),
+            )
+            conn.commit()
+            return {"target": target_username, "new_honor": t_row["honor"], "daily_used": used_today + amount}
     finally:
-        release_conn(conn)
+        release_db_connection(conn)
+
 
 @app.get("/api/friends")
-def get_friends(user=Depends(get_current_user)):
-    uid = user["uid"]
-    conn = get_conn()
+def get_friends(current_user: Dict[str, Any] = Depends(get_current_user)):
+    uname = current_user["username"]
+    conn = get_db_connection()
     try:
-        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute(
+                "SELECT * FROM friends WHERE requester = %s OR addressee = %s ORDER BY created_at DESC",
+                (uname, uname),
+            )
+            rows = [dict(r) for r in cur.fetchall()]
+            friends_list = []
+            incoming = []
+            outgoing = []
+            for r in rows:
+                if r["status"] == "accepted":
+                    other = r["addressee"] if r["requester"] == uname else r["requester"]
+                    friends_list.append(other)
+                elif r["status"] == "pending":
+                    if r["addressee"] == uname:
+                        incoming.append(r["requester"])
+                    else:
+                        outgoing.append(r["addressee"])
+            return {"friends": friends_list, "incoming": incoming, "outgoing": outgoing}
+    finally:
+        release_db_connection(conn)
+
+
+@app.post("/api/friends/action")
+async def friend_action(req: FriendActionReq, current_user: Dict[str, Any] = Depends(get_current_user)):
+    uname = current_user["username"]
+    target = req.target_username.strip()
+    if target == uname:
+        raise HTTPException(status_code=400, detail="Cannot add yourself")
+    conn = get_db_connection()
+    try:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute("SELECT username FROM users WHERE username = %s", (target,))
+            if not cur.fetchone():
+                raise HTTPException(status_code=404, detail="User not found")
+
+            if req.action == "request":
+                cur.execute(
+                    """
+                    INSERT INTO friends (requester, addressee, status)
+                    VALUES (%s, %s, 'pending')
+                    ON CONFLICT (requester, addressee) DO UPDATE SET status = 'pending'
+                    """,
+                    (uname, target),
+                )
+            elif req.action == "accept":
+                cur.execute(
+                    "UPDATE friends SET status = 'accepted' WHERE requester = %s AND addressee = %s",
+                    (target, uname),
+                )
+            elif req.action == "decline":
+                cur.execute(
+                    "DELETE FROM friends WHERE (requester = %s AND addressee = %s) OR (requester = %s AND addressee = %s)",
+                    (target, uname, uname, target),
+                )
+            conn.commit()
+
+        await manager.broadcast(
+            "global",
+            {
+                "type": "friend_update",
+                "actor": uname,
+                "target": target,
+                "action": req.action,
+            },
+        )
+        return {"ok": True, "action": req.action, "target": target}
+    finally:
+        release_db_connection(conn)
+
+
+@app.get("/api/dms/{other_user}")
+def get_dms(other_user: str, current_user: Dict[str, Any] = Depends(get_current_user)):
+    uname = current_user["username"]
+    conn = get_db_connection()
+    try:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
             cur.execute(
                 """
-                SELECT u.uid, u.username, u.honor, u.level, u.equipped_sticker, f.status, f.requester_uid
-                FROM friends f
-                JOIN users u ON (u.uid = CASE WHEN f.requester_uid = %s THEN f.addressee_uid ELSE f.requester_uid END)
-                WHERE f.requester_uid = %s OR f.addressee_uid = %s
+                SELECT * FROM direct_messages
+                WHERE (sender = %s AND recipient = %s) OR (sender = %s AND recipient = %s)
+                ORDER BY id ASC LIMIT 200
                 """,
-                (uid, uid, uid),
+                (uname, other_user, other_user, uname),
             )
-            return cur.fetchall()
+            return {"messages": [dict(r) for r in cur.fetchall()]}
     finally:
-        release_conn(conn)
+        release_db_connection(conn)
 
-@app.post("/api/friends/request")
-def send_friend_request(req: FriendRequestReq, user=Depends(get_current_user)):
-    conn = get_conn()
+
+@app.post("/api/dms")
+async def send_dm(req: DmSendReq, current_user: Dict[str, Any] = Depends(get_current_user)):
+    uname = current_user["username"]
+    conn = get_db_connection()
     try:
-        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
-            cur.execute("SELECT uid, username FROM users WHERE LOWER(username) = LOWER(%s)", (req.username.strip(),))
-            target = cur.fetchone()
-            if not target:
-                raise HTTPException(status_code=404, detail="Player not found")
-            if target["uid"] == user["uid"]:
-                raise HTTPException(status_code=400, detail="Cannot add yourself")
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute("SELECT username FROM users WHERE username = %s", (req.recipient,))
+            if not cur.fetchone():
+                raise HTTPException(status_code=404, detail="Recipient not found")
             cur.execute(
                 """
-                INSERT INTO friends (requester_uid, addressee_uid, status)
-                VALUES (%s, %s, 'pending')
-                ON CONFLICT (requester_uid, addressee_uid) DO NOTHING
+                INSERT INTO direct_messages (sender, recipient, content)
+                VALUES (%s, %s, %s)
+                RETURNING *
                 """,
-                (user["uid"], target["uid"]),
+                (uname, req.recipient, req.content.strip()),
             )
-            return {"ok": True, "friend": target["username"]}
-    finally:
-        release_conn(conn)
+            msg = dict(cur.fetchone())
+            conn.commit()
 
-@app.post("/api/friends/accept")
-def accept_friend_request(req: FriendAcceptReq, user=Depends(get_current_user)):
-    conn = get_conn()
+        pair = sorted([uname, req.recipient])
+        dm_room = f"dm:{pair[0]}:{pair[1]}"
+        await manager.broadcast(dm_room, {"type": "dm_message", "message": msg})
+        await manager.broadcast("global", {"type": "dm_notify", "message": msg})
+        return {"message": msg}
+    finally:
+        release_db_connection(conn)
+
+
+# ---------------------------------------------------------------------------
+# Chat Rooms, Bots, Giveaways & Counting Endpoints
+# ---------------------------------------------------------------------------
+@app.get("/api/chat/{room}")
+def get_chat_history(room: str, limit: int = 80):
+    conn = get_db_connection()
     try:
-        with conn.cursor() as cur:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
             cur.execute(
-                "UPDATE friends SET status = 'accepted' WHERE requester_uid = %s AND addressee_uid = %s",
-                (req.requester_uid, user["uid"]),
+                "SELECT * FROM chat_messages WHERE room = %s ORDER BY id DESC LIMIT %s",
+                (room, min(limit, 200)),
             )
-            return {"ok": True}
+            rows = [dict(r) for r in cur.fetchall()]
+            rows.reverse()
+            cur.execute("SELECT * FROM counting_state WHERE id = 1")
+            c_state = dict(cur.fetchone())
+            cur.execute("SELECT * FROM giveaways WHERE active = TRUE ORDER BY id DESC LIMIT 5")
+            g_list = [dict(r) for r in cur.fetchall()]
+            return {"messages": rows, "counting": c_state, "giveaways": g_list}
     finally:
-        release_conn(conn)
+        release_db_connection(conn)
 
-# ================= SCROLLS / CONFESSIONS =================
-@app.get("/api/confessions")
-def get_confessions():
-    conn = get_conn()
-    try:
-        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
-            cur.execute("SELECT * FROM confessions ORDER BY id DESC LIMIT 40")
-            rows = cur.fetchall()
-            for r in rows:
-                cur.execute("SELECT author_name, text, created_at FROM confession_replies WHERE confession_id = %s ORDER BY id ASC", (r["id"],))
-                r["replies"] = cur.fetchall()
-            return rows
-    finally:
-        release_conn(conn)
 
-@app.post("/api/confessions")
-async def create_confession(req: ConfessionReq):
-    conn = get_conn()
+@app.post("/api/chat/send")
+async def post_chat_message(req: ChatPostReq, current_user: Dict[str, Any] = Depends(get_current_user)):
+    uname = current_user["username"]
+    manager.online_users[uname] = now_ts()
+    content = req.content.strip()
+    conn = get_db_connection()
     try:
-        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
             cur.execute(
-                "INSERT INTO confessions (author_name, sticker, mood, text) VALUES (%s, %s, %s, %s) RETURNING *",
-                (req.author_name[:64], req.sticker[:8], req.mood[:32], req.text.strip()),
+                """
+                INSERT INTO chat_messages (room, sender, is_bot, content)
+                VALUES (%s, %s, FALSE, %s)
+                RETURNING *
+                """,
+                (req.room, uname, content),
             )
-            created = cur.fetchone()
-            created["replies"] = []
-    finally:
-        release_conn(conn)
-    await ws_manager.broadcast_all({"type": "confession:new", "data": created})
-    return created
+            user_msg = dict(cur.fetchone())
+            cur.execute("UPDATE users SET messages_count = COALESCE(messages_count, 0) + 1 WHERE username = %s", (uname,))
+            xp_info = award_xp_and_coins(conn, uname, xp_gain=10, coins_gain=5)
 
-@app.post("/api/confessions/{cid}/like")
-async def like_confession(cid: int):
-    conn = get_conn()
-    try:
-        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
-            cur.execute("UPDATE confessions SET likes = likes + 1 WHERE id = %s RETURNING id, likes", (cid,))
-            row = cur.fetchone()
-    finally:
-        release_conn(conn)
-    if row:
-        await ws_manager.broadcast_all({"type": "confession:like", "id": row["id"], "likes": row["likes"]})
-    return {"ok": True, "id": cid, "likes": row["likes"] if row else None}
+            bot_msgs = await process_bot_command(conn, req.room, uname, content)
+            conn.commit()
 
-@app.post("/api/confessions/{cid}/replies")
-async def reply_confession(cid: int, req: ReplyReq):
-    clean_author = req.author_name[:64]
-    clean_text = req.text.strip()
-    conn = get_conn()
-    try:
-        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
-            cur.execute(
-                "INSERT INTO confession_replies (confession_id, author_name, text) VALUES (%s, %s, %s) RETURNING author_name, text, created_at",
-                (cid, clean_author, clean_text),
+        await manager.broadcast(
+            req.room,
+            {"type": "chat_message", "message": user_msg, "xp_info": xp_info},
+        )
+        if req.room != "global":
+            await manager.broadcast(
+                "global",
+                {"type": "chat_message", "message": user_msg, "xp_info": xp_info},
             )
-            reply_row = cur.fetchone()
+
+        for bm in (bot_msgs or []):
+            await manager.broadcast(req.room, {"type": "bot_message", "message": bm})
+            if req.room != "global":
+                await manager.broadcast("global", {"type": "bot_message", "message": bm})
+
+        return {"message": user_msg, "bot_messages": bot_msgs or [], "xp_info": xp_info}
     finally:
-        release_conn(conn)
-    await ws_manager.broadcast_all({
-        "type": "confession:reply",
-        "confession_id": cid,
-        "reply": reply_row,
-    })
-    return {"ok": True, "reply": reply_row}
+        release_db_connection(conn)
 
-# ================= GLOBAL CHAT, BOTS & WEBSOCKETS =================
-@app.get("/api/messages/{target}")
-def get_messages(target: str):
-    conn = get_conn()
+
+@app.post("/api/giveaways/{giveaway_id}/join")
+async def join_giveaway(giveaway_id: int, current_user: Dict[str, Any] = Depends(get_current_user)):
+    uname = current_user["username"]
+    conn = get_db_connection()
     try:
-        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
-            cur.execute("SELECT * FROM messages WHERE target = %s ORDER BY id ASC LIMIT 80", (target,))
-            rows = cur.fetchall()
-            for r in rows:
-                r["html"] = format_rich_message_py(r.get("text") or "")
-            return rows
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute("SELECT * FROM giveaways WHERE id = %s", (giveaway_id,))
+            gw = cur.fetchone()
+            if not gw or not gw["active"]:
+                raise HTTPException(status_code=404, detail="Giveaway not active")
+            entries = gw["entries"] or []
+            if uname not in entries:
+                entries.append(uname)
+                cur.execute(
+                    "UPDATE giveaways SET entries = %s::jsonb WHERE id = %s",
+                    (json.dumps(entries), giveaway_id),
+                )
+                conn.commit()
+        await manager.broadcast(
+            "global",
+            {"type": "giveaway_update", "giveaway_id": giveaway_id, "entries_count": len(entries), "user": uname},
+        )
+        return {"joined": True, "entries_count": len(entries)}
     finally:
-        release_conn(conn)
+        release_db_connection(conn)
 
-@app.post("/api/messages")
-async def post_message(req: MessageReq, user=Depends(get_current_user)):
-    clean_text = req.text.strip()
-    conn = get_conn()
-    try:
-        with conn.cursor() as cur:
-            cur.execute("INSERT INTO messages (sender, target, text) VALUES (%s, %s, %s)", (user["username"], req.target, clean_text))
-    finally:
-        release_conn(conn)
-    payload = {
-        "id": f"msg_{uuid.uuid4().hex[:10]}",
-        "type": "message:new",
-        "sender": user["username"],
-        "target": req.target,
-        "text": clean_text,
-        "html": format_rich_message_py(clean_text),
-        "ts": time.time(),
-    }
-    if req.target == "global":
-        _record_chat_message(payload)
-        await ws_manager.broadcast_all(payload)
-    else:
-        await ws_manager.broadcast(req.target, payload)
-    if clean_text.startswith(("/", "!", "-")):
-        await execute_bot_command_py(clean_text, sender=user["username"], room=req.target)
-    return payload
 
-@app.post("/api/bots/command")
-async def run_bot_command_endpoint(payload: dict):
-    cmd = str(payload.get("command", ""))
-    sender = str(payload.get("sender", "Wanderer"))
-    room = str(payload.get("room", "global"))
-    return await execute_bot_command_py(cmd, sender=sender, room=room)
-
-@app.get("/api/chat/format")
-def format_chat_endpoint(text: str = Query("")):
-    return {"text": text, "html": format_rich_message_py(text)}
-
-@app.websocket("/ws/{room}")
-async def websocket_room(ws: WebSocket, room: str):
-    await ws_manager.connect(room, ws)
-    await ws.send_json({
-        "type": "sync:init",
-        "room": room,
-        "global_chat_history": GLOBAL_CHAT_HISTORY,
-        "online_users": ws_manager.get_online_users(),
-        "lounges": _fetch_all_lounges_sync(),
-    })
-    try:
-        while True:
-            data = await ws.receive_json()
-            ev_type = str(data.get("type") or "message:new")
-            sender = str(data.get("sender") or "Guest")
-            msg_text = str(data.get("text") or "")
-
-            if sender and sender != "Guest":
-                ws_manager.update_meta(ws, username=sender, lounge_id=data.get("loungeId") or data.get("lounge_id"))
-
-            if ev_type == "presence:ping":
-                await ws_manager.broadcast_all({
-                    "type": "presence:sync",
-                    "online_users": ws_manager.get_online_users(),
-                    "lounges": _fetch_all_lounges_sync(),
-                })
-                continue
-
-            if ev_type == "sync:request":
-                await ws.send_json({
-                    "type": "sync:init",
-                    "room": room,
-                    "global_chat_history": GLOBAL_CHAT_HISTORY,
-                    "online_users": ws_manager.get_online_users(),
-                    "lounges": _fetch_all_lounges_sync(),
-                })
-                continue
-
-            if msg_text:
-                data.setdefault("id", f"msg_{uuid.uuid4().hex[:10]}")
-                data.setdefault("ts", time.time())
-                data["html"] = format_rich_message_py(msg_text)
-                if room == "global" or str(data.get("target") or "").lower() == "global":
-                    _record_chat_message(data)
-                    await ws_manager.broadcast_all(data)
-                else:
-                    await ws_manager.broadcast(room, data)
-                if msg_text.startswith(("/", "!", "-")):
-                    await execute_bot_command_py(msg_text, sender=sender, room=room)
-            else:
-                if ev_type in ("lounges:refresh", "lounge:music", "presence:sync"):
-                    await ws_manager.broadcast_all(data)
-                else:
-                    await ws_manager.broadcast(room, data)
-    except WebSocketDisconnect:
-        meta = ws_manager.disconnect(room, ws)
-        if meta and meta.get("username") and meta["username"] != "Guest":
-            await ws_manager.broadcast_all({
-                "type": "presence:sync",
-                "online_users": ws_manager.get_online_users(),
-            })
-
-# ================= GUILD BOSS & ADMIN CMS =================
-@app.get("/api/guild")
-def get_guild():
-    conn = get_conn()
-    try:
-        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
-            cur.execute("SELECT * FROM guild_state WHERE id = 1")
-            return cur.fetchone()
-    finally:
-        release_conn(conn)
-
-@app.post("/api/guild/attack")
-async def attack_guild_boss(req: HonorReq):
-    dmg = min(350, max(20, req.amount))
-    conn = get_conn()
-    try:
-        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
-            cur.execute("SELECT * FROM guild_state WHERE id = 1")
-            g = cur.fetchone()
-            new_hp = g["boss_hp"] - dmg
-            new_tier = g["boss_tier"]
-            new_max = g["boss_max_hp"]
-            if new_hp <= 0:
-                new_tier += 1
-                new_max = 500 + (new_tier - 1) * 300
-                new_hp = new_max
-            cur.execute(
-                "UPDATE guild_state SET boss_hp = %s, boss_tier = %s, boss_max_hp = %s WHERE id = 1 RETURNING *",
-                (new_hp, new_tier, new_max),
-            )
-            updated = cur.fetchone()
-    finally:
-        release_conn(conn)
-    await ws_manager.broadcast_all({"type": "guild:update", "data": updated})
-    return updated
-
-@app.get("/api/cms")
-def get_cms():
-    conn = get_conn()
-    try:
-        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
-            cur.execute("SELECT * FROM cms_settings")
-            rows = {r["setting_key"]: r["setting_value"] for r in cur.fetchall()}
-    finally:
-        release_conn(conn)
-    return {
-        "announcement": rows.get("announcement", ""),
-        "pollQuestion": rows.get("poll_question", ""),
-        "pollOptions": json.loads(rows.get("poll_options", "[]")),
-    }
-
-@app.post("/api/cms/poll/vote")
-def vote_poll(req: PollVoteReq):
-    conn = get_conn()
-    try:
-        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
-            cur.execute("SELECT setting_value FROM cms_settings WHERE setting_key = 'poll_options'")
-            row = cur.fetchone()
-            opts = json.loads(row["setting_value"]) if row else []
-            if 0 <= req.index < len(opts):
-                opts[req.index]["votes"] += 1
-                cur.execute("UPDATE cms_settings SET setting_value = %s WHERE setting_key = 'poll_options'", (json.dumps(opts),))
-            return opts
-    finally:
-        release_conn(conn)
-
-@app.delete("/api/admin/confessions/{cid}", dependencies=[Depends(require_admin)])
-async def admin_delete_confession(cid: int):
-    conn = get_conn()
-    try:
-        with conn.cursor() as cur:
-            cur.execute("DELETE FROM confessions WHERE id = %s", (cid,))
-    finally:
-        release_conn(conn)
-    await ws_manager.broadcast_all({"type": "confession:delete", "id": cid})
-    return {"ok": True}
-
-# ================= LOUNGES & MUSIC SYNC =================
+# ---------------------------------------------------------------------------
+# Lounges & Synchronized YouTube / Music Engine
+# ---------------------------------------------------------------------------
 @app.get("/api/lounges")
 def list_lounges():
-    return _fetch_all_lounges_sync()
-
-@app.get("/api/lounges/{lounge_id}/state")
-def get_lounge_state(lounge_id: str):
-    conn = get_conn()
+    conn = get_db_connection()
     try:
-        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
-            cur.execute("SELECT * FROM tavern_lounges WHERE id = %s", (lounge_id,))
-            row = cur.fetchone()
-            if not row:
-                raise HTTPException(status_code=404, detail="Lounge not found")
-            row["music_state"] = _compute_music_state(
-                lounge_id,
-                ws_manager.lounge_music_state.get(lounge_id),
-                fallback_track=row.get("current_track") or "Ancient Tavern Hearth & Rain Synth",
-                fallback_vid=row.get("video_id") or "",
-            )
-            row["online_users"] = ws_manager.get_online_users()
-            return row
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute("SELECT * FROM lounges ORDER BY id ASC")
+            lounges = [dict(r) for r in cur.fetchall()]
+            t = now_ts()
+            for l in lounges:
+                elapsed = max(0.0, t - (l.get("updated_at") or t)) if l.get("is_playing") else 0.0
+                l["computed_position"] = round((l.get("base_position") or 0.0) + elapsed, 2)
+                l["server_time"] = t
+            return {"lounges": lounges}
     finally:
-        release_conn(conn)
+        release_db_connection(conn)
 
-@app.post("/api/lounges/create")
-async def create_custom_lounge(req: LoungeCreateReq):
-    lid = "lng_" + secrets.token_hex(4)
-    host = req.host_name.strip()[:32] or "Host"
-    conn = get_conn()
+
+@app.post("/api/lounges")
+async def create_lounge(req: LoungeCreateReq, current_user: Dict[str, Any] = Depends(get_current_user)):
+    uname = current_user["username"]
+    vid = extract_youtube_id(req.video_url_or_id or "") or "jfKfPfyJRdk"
+    ts = now_ts()
+    conn = get_db_connection()
     try:
-        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
-            _remove_member_from_all_lounges(cur, host)
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
             cur.execute(
                 """
-                INSERT INTO tavern_lounges (id, name, members, max_capacity, passcode, host_name)
-                VALUES (%s, %s, %s::jsonb, %s, %s, %s) RETURNING *
+                INSERT INTO lounges (name, topic, theme, creator, members, video_id, video_title, is_playing, base_position, updated_at)
+                VALUES (%s, %s, %s, %s, %s::jsonb, %s, %s, TRUE, 0.0, %s)
+                RETURNING *
                 """,
-                (lid, req.name.strip()[:48] or "Private Lounge", json.dumps([host]), 5, req.passcode.strip()[:24], host),
+                (req.name.strip(), req.topic.strip(), req.theme, uname, json.dumps([uname]), vid, f"Stream ({vid})", ts),
             )
-            created = cur.fetchone()
+            lounge = dict(cur.fetchone())
+            conn.commit()
+        await manager.broadcast("global", {"type": "lounge_created", "lounge": lounge})
+        return {"lounge": lounge}
     finally:
-        release_conn(conn)
-    lounges = _fetch_all_lounges_sync()
-    await ws_manager.broadcast_all({
-        "type": "lounges:refresh",
-        "lounges": lounges,
-        "active_lounge": created,
-        "online_users": ws_manager.get_online_users(),
-    })
-    return created
+        release_db_connection(conn)
 
-@app.post("/api/lounges/join_pass")
-async def join_lounge_with_pass(req: LoungeJoinPassReq):
-    uname = req.username.strip()[:32] or "Guest"
-    conn = get_conn()
+
+@app.post("/api/lounges/{lounge_id}/join")
+async def join_lounge(lounge_id: int, current_user: Dict[str, Any] = Depends(get_current_user)):
+    uname = current_user["username"]
+    conn = get_db_connection()
     try:
-        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
-            cur.execute("SELECT * FROM tavern_lounges WHERE id = %s", (req.lounge_id,))
-            row = cur.fetchone()
-            if not row:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute("SELECT * FROM lounges WHERE id = %s", (lounge_id,))
+            l = cur.fetchone()
+            if not l:
                 raise HTTPException(status_code=404, detail="Lounge not found")
-            expected = (row.get("passcode") or "").strip()
-            if expected and expected != req.passcode.strip():
-                raise HTTPException(status_code=403, detail="Invalid lounge passcode")
-            members = list(row["members"] or [])
+            members = list(l["members"] or [])
             if uname not in members:
-                if len(members) >= row["max_capacity"]:
-                    raise HTTPException(status_code=400, detail="Lounge is full (5/5)")
-                _remove_member_from_all_lounges(cur, uname)
+                if len(members) >= MAX_LOUNGE_MEMBERS:
+                    raise HTTPException(status_code=400, detail="Lounge is full")
                 members.append(uname)
-                cur.execute(
-                    "UPDATE tavern_lounges SET members = %s::jsonb WHERE id = %s RETURNING *",
-                    (json.dumps(members), req.lounge_id),
-                )
-                row = cur.fetchone()
+                cur.execute("UPDATE lounges SET members = %s::jsonb WHERE id = %s", (json.dumps(members), lounge_id))
+                conn.commit()
+            cur.execute("SELECT * FROM lounges WHERE id = %s", (lounge_id,))
+            updated = dict(cur.fetchone())
+        await manager.broadcast("global", {"type": "lounge_updated", "lounge": updated})
+        await manager.broadcast(f"lounge:{lounge_id}", {"type": "lounge_updated", "lounge": updated})
+        return {"lounge": updated}
     finally:
-        release_conn(conn)
-    for ws, meta in ws_manager.socket_meta.items():
-        if meta.get("username") == uname:
-            meta["lounge_id"] = req.lounge_id
-    music = _compute_music_state(
-        req.lounge_id,
-        ws_manager.lounge_music_state.get(req.lounge_id),
-        fallback_track=row.get("current_track") or "Ancient Tavern Hearth & Rain Synth",
-        fallback_vid=row.get("video_id") or "",
-    )
-    row["music_state"] = music
-    lounges = _fetch_all_lounges_sync()
-    await ws_manager.broadcast_all({
-        "type": "lounges:refresh",
-        "lounges": lounges,
-        "active_lounge": row,
-        "joined_user": uname,
-        "lounge_id": req.lounge_id,
-        "music_state": music,
-        "online_users": ws_manager.get_online_users(),
-    })
-    return {"ok": True, "lounge": row, "music_state": music}
+        release_db_connection(conn)
+
 
 @app.post("/api/lounges/{lounge_id}/leave")
-async def leave_lounge(lounge_id: str, req: LoungeJoinPassReq):
-    uname = req.username.strip()[:32] or "Guest"
-    conn = get_conn()
+async def leave_lounge(lounge_id: int, current_user: Dict[str, Any] = Depends(get_current_user)):
+    uname = current_user["username"]
+    conn = get_db_connection()
     try:
-        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
-            cur.execute("SELECT members FROM tavern_lounges WHERE id = %s", (lounge_id,))
-            row = cur.fetchone()
-            if row:
-                members = [m for m in (row["members"] or []) if m != uname]
-                cur.execute("UPDATE tavern_lounges SET members = %s::jsonb WHERE id = %s", (json.dumps(members), lounge_id))
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute("SELECT * FROM lounges WHERE id = %s", (lounge_id,))
+            l = cur.fetchone()
+            if not l:
+                raise HTTPException(status_code=404, detail="Lounge not found")
+            members = [m for m in (l["members"] or []) if m != uname]
+            cur.execute("UPDATE lounges SET members = %s::jsonb WHERE id = %s RETURNING *", (json.dumps(members), lounge_id))
+            updated = dict(cur.fetchone())
+            conn.commit()
+        await manager.broadcast("global", {"type": "lounge_updated", "lounge": updated})
+        await manager.broadcast(f"lounge:{lounge_id}", {"type": "lounge_updated", "lounge": updated})
+        return {"lounge": updated}
     finally:
-        release_conn(conn)
-    for meta in ws_manager.socket_meta.values():
-        if meta.get("username") == uname and meta.get("lounge_id") == lounge_id:
-            meta["lounge_id"] = None
-    lounges = _fetch_all_lounges_sync()
-    await ws_manager.broadcast_all({
-        "type": "lounges:refresh",
-        "lounges": lounges,
-        "left_user": uname,
-        "lounge_id": lounge_id,
-        "online_users": ws_manager.get_online_users(),
-    })
-    return {"ok": True}
+        release_db_connection(conn)
 
-@app.post("/api/lounges/sync_music")
-async def sync_lounge_music(req: LoungeMusicSyncReq):
-    conn = get_conn()
+
+@app.get("/api/media/{channel_key}")
+def get_media_state(channel_key: str, lounge_id: Optional[int] = None):
+    conn = get_db_connection()
+    try:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            t = now_ts()
+            if lounge_id is not None:
+                cur.execute("SELECT * FROM lounges WHERE id = %s", (lounge_id,))
+                l = cur.fetchone()
+                if not l:
+                    raise HTTPException(status_code=404, detail="Lounge not found")
+                elapsed = max(0.0, t - (l["updated_at"] or t)) if l["is_playing"] else 0.0
+                return {
+                    "channel_key": f"lounge:{lounge_id}",
+                    "video_id": l["video_id"],
+                    "title": l["video_title"],
+                    "queue": l["queue"] or [],
+                    "is_playing": l["is_playing"],
+                    "base_position": l["base_position"] or 0.0,
+                    "computed_position": round((l["base_position"] or 0.0) + elapsed, 2),
+                    "updated_at": l["updated_at"] or t,
+                    "server_time": t,
+                }
+
+            cur.execute("SELECT * FROM media_state WHERE channel_key = %s", (channel_key,))
+            m = cur.fetchone()
+            if not m:
+                raise HTTPException(status_code=404, detail="Media channel not found")
+            elapsed = max(0.0, t - (m["updated_at"] or t)) if m["is_playing"] else 0.0
+            return {
+                "channel_key": m["channel_key"],
+                "video_id": m["video_id"],
+                "title": m["title"],
+                "queue": m["queue"] or [],
+                "is_playing": m["is_playing"],
+                "base_position": m["base_position"] or 0.0,
+                "computed_position": round((m["base_position"] or 0.0) + elapsed, 2),
+                "updated_at": m["updated_at"] or t,
+                "server_time": t,
+                "updated_by": m["updated_by"],
+            }
+    finally:
+        release_db_connection(conn)
+
+
+@app.post("/api/media/sync")
+async def sync_media(req: MediaSyncReq, current_user: Dict[str, Any] = Depends(get_current_user)):
+    uname = current_user["username"]
+    ts = now_ts()
+    parsed_vid = extract_youtube_id(req.video_url_or_id or "")
+
+    conn = get_db_connection()
+    try:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            if req.lounge_id is not None:
+                cur.execute("SELECT * FROM lounges WHERE id = %s", (req.lounge_id,))
+                row = cur.fetchone()
+                if not row:
+                    raise HTTPException(status_code=404, detail="Lounge not found")
+
+                cur_pos = (row["base_position"] or 0.0) + (
+                    max(0.0, ts - (row["updated_at"] or ts)) if row["is_playing"] else 0.0
+                )
+                pos = req.position if req.position is not None else cur_pos
+                vid = parsed_vid or row["video_id"]
+                title = req.title or (f"YouTube Track ({vid})" if parsed_vid else row["video_title"])
+                playing = row["is_playing"]
+                queue = list(row["queue"] or [])
+
+                if req.action == "play":
+                    playing = True
+                elif req.action == "pause":
+                    playing = False
+                elif req.action == "seek":
+                    pos = max(0.0, float(req.position or 0.0))
+                elif req.action == "queue" and parsed_vid:
+                    item = {"video_id": parsed_vid, "title": req.title or f"Track ({parsed_vid})", "by": uname}
+                    if not vid:
+                        vid = parsed_vid
+                        title = item["title"]
+                        pos = 0.0
+                        playing = True
+                    else:
+                        queue.append(item)
+                elif req.action == "skip" and queue:
+                    nxt = queue.pop(0)
+                    vid = nxt["video_id"]
+                    title = nxt["title"]
+                    pos = 0.0
+                    playing = True
+
+                cur.execute(
+                    """
+                    UPDATE lounges
+                    SET video_id = %s, video_title = %s, queue = %s::jsonb, is_playing = %s, base_position = %s, updated_at = %s
+                    WHERE id = %s
+                    RETURNING *
+                    """,
+                    (vid, title, json.dumps(queue), playing, pos, ts, req.lounge_id),
+                )
+                updated_l = dict(cur.fetchone())
+                conn.commit()
+
+                payload = {
+                    "type": "media_sync",
+                    "channel_key": f"lounge:{req.lounge_id}",
+                    "lounge_id": req.lounge_id,
+                    "video_id": updated_l["video_id"],
+                    "title": updated_l["video_title"],
+                    "queue": updated_l["queue"],
+                    "is_playing": updated_l["is_playing"],
+                    "base_position": updated_l["base_position"],
+                    "updated_at": updated_l["updated_at"],
+                    "updated_by": uname,
+                }
+                await manager.broadcast(f"lounge:{req.lounge_id}", payload)
+                await manager.broadcast("global", payload)
+                return payload
+
+            # Entertainment / global media channel
+            cur.execute("SELECT * FROM media_state WHERE channel_key = %s", (req.channel_key,))
+            m = cur.fetchone()
+            if not m:
+                cur.execute(
+                    """
+                    INSERT INTO media_state (channel_key, video_id, title, queue, is_playing, base_position, updated_at, updated_by)
+                    VALUES (%s, 'jfKfPfyJRdk', 'Lofi Beats', '[]'::jsonb, TRUE, 0.0, %s, %s)
+                    RETURNING *
+                    """,
+                    (req.channel_key, ts, uname),
+                )
+                m = cur.fetchone()
+
+            cur_pos = (m["base_position"] or 0.0) + (
+                max(0.0, ts - (m["updated_at"] or ts)) if m["is_playing"] else 0.0
+            )
+            pos = req.position if req.position is not None else cur_pos
+            vid = parsed_vid or m["video_id"]
+            title = req.title or (f"YouTube Track ({vid})" if parsed_vid else m["title"])
+            playing = m["is_playing"]
+            queue = list(m["queue"] or [])
+
+            if req.action == "play":
+                playing = True
+            elif req.action == "pause":
+                playing = False
+            elif req.action == "seek":
+                pos = max(0.0, float(req.position or 0.0))
+            elif req.action == "queue" and parsed_vid:
+                queue.append({"video_id": parsed_vid, "title": req.title or f"Track ({parsed_vid})", "by": uname})
+            elif req.action == "skip" and queue:
+                nxt = queue.pop(0)
+                vid = nxt["video_id"]
+                title = nxt["title"]
+                pos = 0.0
+                playing = True
+
+            cur.execute(
+                """
+                UPDATE media_state
+                SET video_id = %s, title = %s, queue = %s::jsonb, is_playing = %s, base_position = %s, updated_at = %s, updated_by = %s
+                WHERE channel_key = %s
+                RETURNING *
+                """,
+                (vid, title, json.dumps(queue), playing, pos, ts, uname, req.channel_key),
+            )
+            updated_m = dict(cur.fetchone())
+            conn.commit()
+
+            payload = {
+                "type": "media_sync",
+                "channel_key": req.channel_key,
+                "video_id": updated_m["video_id"],
+                "title": updated_m["title"],
+                "queue": updated_m["queue"],
+                "is_playing": updated_m["is_playing"],
+                "base_position": updated_m["base_position"],
+                "updated_at": updated_m["updated_at"],
+                "updated_by": uname,
+            }
+            await manager.broadcast("global", payload)
+            return payload
+    finally:
+        release_db_connection(conn)
+
+
+@app.get("/api/youtube/search")
+async def youtube_search(q: str = Query(..., min_length=1)):
+    direct_id = extract_youtube_id(q)
+    if direct_id:
+        return {"items": [{"video_id": direct_id, "title": f"YouTube Video ({direct_id})"}]}
+
+    if YOUTUBE_API_KEY:
+        try:
+            async with httpx.AsyncClient(timeout=8.0) as client:
+                resp = await client.get(
+                    "https://www.googleapis.com/youtube/v3/search",
+                    params={
+                        "part": "snippet",
+                        "q": q,
+                        "type": "video",
+                        "maxResults": 6,
+                        "key": YOUTUBE_API_KEY,
+                    },
+                )
+                if resp.status_code == 200:
+                    data = resp.json()
+                    items = []
+                    for it in data.get("items", []):
+                        vid = it.get("id", {}).get("videoId")
+                        title = it.get("snippet", {}).get("title", "YouTube Video")
+                        if vid:
+                            items.append({"video_id": vid, "title": title})
+                    return {"items": items}
+        except Exception:
+            pass
+
+    curated = [
+        {"video_id": "jfKfPfyJRdk", "title": "Lofi Hip Hop Radio - Beats to Chill/Study to"},
+        {"video_id": "4xDzrJKXOOY", "title": "Synthwave Radio - Beats to Chill/Game to"},
+        {"video_id": "5qap5aO4i9A", "title": "Chill Lofi Beats Mix"},
+    ]
+    return {"items": curated, "note": "Paste any full YouTube URL/ID to queue any video."}
+
+
+# ---------------------------------------------------------------------------
+# Confessions, Stories, Polls, Guild Boss & Arcade
+# ---------------------------------------------------------------------------
+@app.get("/api/confessions")
+def list_confessions():
+    conn = get_db_connection()
+    try:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute("SELECT * FROM confessions ORDER BY id DESC LIMIT 100")
+            confs = [dict(r) for r in cur.fetchall()]
+            cur.execute("SELECT * FROM confession_replies ORDER BY id ASC")
+            replies = [dict(r) for r in cur.fetchall()]
+            reply_map: Dict[int, List[Dict[str, Any]]] = defaultdict(list)
+            for rep in replies:
+                reply_map[rep["confession_id"]].append(rep)
+            for c in confs:
+                c["replies"] = reply_map.get(c["id"], [])
+            return {"confessions": confs}
+    finally:
+        release_db_connection(conn)
+
+
+@app.post("/api/confessions")
+async def create_confession(req: ConfessionCreateReq, current_user: Dict[str, Any] = Depends(get_current_user)):
+    author_label = "Anonymous" if req.is_anonymous else current_user["username"]
+    conn = get_db_connection()
+    try:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute(
+                """
+                INSERT INTO confessions (author, is_anonymous, content, likes)
+                VALUES (%s, %s, %s, 0)
+                RETURNING *
+                """,
+                (author_label, req.is_anonymous, req.content.strip()),
+            )
+            conf = dict(cur.fetchone())
+            conf["replies"] = []
+            award_xp_and_coins(conn, current_user["username"], xp_gain=15, coins_gain=10)
+            conn.commit()
+        await manager.broadcast("global", {"type": "confession_created", "confession": conf})
+        return {"confession": conf}
+    finally:
+        release_db_connection(conn)
+
+
+@app.post("/api/confessions/{confession_id}/like")
+async def like_confession(confession_id: int, current_user: Dict[str, Any] = Depends(get_current_user)):
+    conn = get_db_connection()
+    try:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute(
+                "UPDATE confessions SET likes = likes + 1 WHERE id = %s RETURNING id, likes",
+                (confession_id,),
+            )
+            row = cur.fetchone()
+            if not row:
+                raise HTTPException(status_code=404, detail="Confession not found")
+            conn.commit()
+        await manager.broadcast("global", {"type": "confession_like", "id": row["id"], "likes": row["likes"]})
+        return dict(row)
+    finally:
+        release_db_connection(conn)
+
+
+@app.post("/api/confessions/{confession_id}/reply")
+async def reply_confession(confession_id: int, req: ConfessionReplyReq, current_user: Dict[str, Any] = Depends(get_current_user)):
+    author_label = "Anonymous" if req.is_anonymous else current_user["username"]
+    conn = get_db_connection()
+    try:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute(
+                """
+                INSERT INTO confession_replies (confession_id, author, content)
+                VALUES (%s, %s, %s)
+                RETURNING *
+                """,
+                (confession_id, author_label, req.content.strip()),
+            )
+            rep = dict(cur.fetchone())
+            conn.commit()
+        await manager.broadcast("global", {"type": "confession_reply", "reply": rep})
+        return {"reply": rep}
+    finally:
+        release_db_connection(conn)
+
+
+@app.get("/api/stories")
+def list_stories():
+    conn = get_db_connection()
+    try:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute("DELETE FROM stories WHERE expires_at < CURRENT_TIMESTAMP")
+            cur.execute("SELECT * FROM stories ORDER BY id DESC LIMIT 40")
+            return {"stories": [dict(r) for r in cur.fetchall()]}
+    finally:
+        release_db_connection(conn)
+
+
+@app.post("/api/stories")
+async def create_story(req: StoryCreateReq, current_user: Dict[str, Any] = Depends(get_current_user)):
+    exp = now_utc() + timedelta(hours=24)
+    conn = get_db_connection()
+    try:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute(
+                """
+                INSERT INTO stories (author, content, mood, expires_at)
+                VALUES (%s, %s, %s, %s)
+                RETURNING *
+                """,
+                (current_user["username"], req.content.strip(), req.mood, exp),
+            )
+            st = dict(cur.fetchone())
+            conn.commit()
+        await manager.broadcast("global", {"type": "story_created", "story": st})
+        return {"story": st}
+    finally:
+        release_db_connection(conn)
+
+
+@app.get("/api/polls")
+def list_polls():
+    conn = get_db_connection()
+    try:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute("SELECT * FROM polls ORDER BY id DESC LIMIT 20")
+            return {"polls": [dict(r) for r in cur.fetchall()]}
+    finally:
+        release_db_connection(conn)
+
+
+@app.post("/api/polls")
+async def create_poll(req: PollCreateReq, current_user: Dict[str, Any] = Depends(get_current_user)):
+    clean_opts = [o.strip() for o in req.options if o.strip()][:6]
+    if len(clean_opts) < 2:
+        raise HTTPException(status_code=400, detail="Need at least 2 options")
+    conn = get_db_connection()
+    try:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute(
+                "INSERT INTO polls (question, options, votes, created_by) VALUES (%s, %s::jsonb, '{}'::jsonb, %s) RETURNING *",
+                (req.question.strip(), json.dumps(clean_opts), current_user["username"]),
+            )
+            p = dict(cur.fetchone())
+            conn.commit()
+        await manager.broadcast("global", {"type": "poll_created", "poll": p})
+        return {"poll": p}
+    finally:
+        release_db_connection(conn)
+
+
+@app.post("/api/polls/{poll_id}/vote")
+async def vote_poll(poll_id: int, req: PollVoteReq, current_user: Dict[str, Any] = Depends(get_current_user)):
+    uname = current_user["username"]
+    conn = get_db_connection()
+    try:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute("SELECT * FROM polls WHERE id = %s", (poll_id,))
+            p = cur.fetchone()
+            if not p:
+                raise HTTPException(status_code=404, detail="Poll not found")
+            opts = p["options"] or []
+            if req.option_index < 0 or req.option_index >= len(opts):
+                raise HTTPException(status_code=400, detail="Invalid option index")
+            votes = dict(p["votes"] or {})
+            votes[uname] = req.option_index
+            cur.execute(
+                "UPDATE polls SET votes = %s::jsonb WHERE id = %s RETURNING *",
+                (json.dumps(votes), poll_id),
+            )
+            updated = dict(cur.fetchone())
+            conn.commit()
+        await manager.broadcast("global", {"type": "poll_updated", "poll": updated})
+        return {"poll": updated}
+    finally:
+        release_db_connection(conn)
+
+
+@app.get("/api/boss")
+def get_boss():
+    conn = get_db_connection()
+    try:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute("SELECT * FROM guild_boss WHERE id = 1")
+            return {"boss": dict(cur.fetchone())}
+    finally:
+        release_db_connection(conn)
+
+
+@app.post("/api/boss/attack")
+async def attack_boss(req: BossAttackReq, current_user: Dict[str, Any] = Depends(get_current_user)):
+    uname = current_user["username"]
+    conn = get_db_connection()
+    try:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute("SELECT * FROM guild_boss WHERE id = 1")
+            b = dict(cur.fetchone())
+            hp = b["hp"] - req.damage
+            max_hp = b["max_hp"]
+            tier = b["tier"]
+            defeated = False
+            if hp <= 0:
+                defeated = True
+                tier += 1
+                max_hp = int(max_hp * 1.25)
+                hp = max_hp
+                award_xp_and_coins(conn, uname, xp_gain=75, coins_gain=150)
+            else:
+                award_xp_and_coins(conn, uname, xp_gain=12, coins_gain=8)
+
+            cur.execute(
+                "UPDATE guild_boss SET hp = %s, max_hp = %s, tier = %s, last_attacker = %s WHERE id = 1 RETURNING *",
+                (hp, max_hp, tier, uname),
+            )
+            updated_boss = dict(cur.fetchone())
+            conn.commit()
+
+        payload = {
+            "type": "boss_update",
+            "boss": updated_boss,
+            "attacker": uname,
+            "damage": req.damage,
+            "defeated": defeated,
+        }
+        await manager.broadcast("global", payload)
+        return payload
+    finally:
+        release_db_connection(conn)
+
+
+@app.get("/api/arcade/scores")
+def get_scores(game: Optional[str] = None):
+    conn = get_db_connection()
+    try:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            if game:
+                cur.execute(
+                    "SELECT game, username, MAX(score) AS best_score FROM arcade_scores WHERE game = %s GROUP BY game, username ORDER BY best_score DESC LIMIT 15",
+                    (game,),
+                )
+            else:
+                cur.execute(
+                    "SELECT game, username, MAX(score) AS best_score FROM arcade_scores GROUP BY game, username ORDER BY best_score DESC LIMIT 25"
+                )
+            return {"scores": [dict(r) for r in cur.fetchall()]}
+    finally:
+        release_db_connection(conn)
+
+
+@app.post("/api/arcade/scores")
+async def submit_score(req: ScoreSubmitReq, current_user: Dict[str, Any] = Depends(get_current_user)):
+    uname = current_user["username"]
+    conn = get_db_connection()
     try:
         with conn.cursor() as cur:
             cur.execute(
-                "UPDATE tavern_lounges SET current_track = %s, video_id = %s WHERE id = %s",
-                (req.title[:120], req.video_id[:32], req.lounge_id),
+                "INSERT INTO arcade_scores (game, username, score) VALUES (%s, %s, %s)",
+                (req.game.strip(), uname, req.score),
             )
+            xp_info = award_xp_and_coins(conn, uname, xp_gain=15, coins_gain=10)
+            conn.commit()
+        await manager.broadcast(
+            "global",
+            {"type": "arcade_score", "game": req.game, "username": uname, "score": req.score},
+        )
+        return {"ok": True, "xp_info": xp_info}
     finally:
-        release_conn(conn)
-    now = time.time()
-    payload = {
-        "type": "lounge:music",
-        "loungeId": req.lounge_id,
-        "title": req.title,
-        "videoId": req.video_id,
-        "stationIdx": req.station_idx,
-        "isPlaying": req.is_playing,
-        "positionSec": float(req.position_sec or 0.0),
-        "elapsed": float(req.position_sec or 0.0),
-        "updatedBy": req.updated_by,
-        "startedAt": now,
-        "updatedAt": now,
-    }
-    ws_manager.lounge_music_state[req.lounge_id] = payload
-    await ws_manager.broadcast_all(payload)
-    return {"ok": True, "music_state": payload}
+        release_db_connection(conn)
 
-@app.post("/api/lounges/{lounge_id}/join")
-async def join_lounge(lounge_id: str, user=Depends(get_current_user)):
-    conn = get_conn()
+
+# ---------------------------------------------------------------------------
+# Admin Endpoints (Preserving x-admin-key moderation)
+# ---------------------------------------------------------------------------
+def verify_admin(x_admin_key: Optional[str] = Header(default=None)):
+    if not x_admin_key or x_admin_key != ADMIN_KEY:
+        raise HTTPException(status_code=403, detail="Invalid admin key")
+
+
+@app.get("/api/admin/overview", dependencies=[Depends(verify_admin)])
+def admin_overview():
+    conn = get_db_connection()
     try:
-        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
-            cur.execute("SELECT * FROM tavern_lounges WHERE id = %s", (lounge_id,))
-            room = cur.fetchone()
-            if not room:
-                raise HTTPException(status_code=404, detail="Lounge not found")
-            members = list(room["members"] or [])
-            uname = user["username"]
-            if uname not in members:
-                if len(members) >= room["max_capacity"]:
-                    raise HTTPException(status_code=400, detail="Lounge is full (5 / 5 max)")
-                _remove_member_from_all_lounges(cur, uname)
-                members.append(uname)
-                cur.execute(
-                    "UPDATE tavern_lounges SET members = %s::jsonb WHERE id = %s RETURNING *",
-                    (json.dumps(members), lounge_id),
-                )
-                room = cur.fetchone()
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute("SELECT id, username, email, xp, level, honor, cowoncy, warnings, created_at FROM users ORDER BY id DESC")
+            users = [dict(r) for r in cur.fetchall()]
+            cur.execute("SELECT * FROM confessions ORDER BY id DESC LIMIT 100")
+            confs = [dict(r) for r in cur.fetchall()]
+            return {"users": users, "confessions": confs}
     finally:
-        release_conn(conn)
-    for meta in ws_manager.socket_meta.values():
-        if meta.get("username") == uname:
-            meta["lounge_id"] = lounge_id
-    lounges = _fetch_all_lounges_sync()
-    await ws_manager.broadcast_all({
-        "type": "lounges:refresh",
-        "lounges": lounges,
-        "active_lounge": room,
-        "lounge_id": lounge_id,
-        "online_users": ws_manager.get_online_users(),
-    })
-    return {"ok": True, "lounge_id": lounge_id, "members": members}
+        release_db_connection(conn)
 
-@app.get("/api/music/youtube")
-def search_youtube_music(q: str):
-    api_key = os.getenv("YOUTUBE_API_KEY", "").strip()
-    if not api_key:
-        raise HTTPException(status_code=404, detail="YOUTUBE_API_KEY not configured")
-    url = "https://www.googleapis.com/youtube/v3/search?" + urllib.parse.urlencode({
-        "part": "snippet", "q": q, "type": "video", "videoEmbeddable": "true", "maxResults": 1, "key": api_key
-    })
-    with urllib.request.urlopen(url, timeout=6) as resp:
-        data = json.loads(resp.read().decode("utf-8"))
-    items = data.get("items", [])
-    if not items:
-        raise HTTPException(status_code=404, detail="No YouTube track found")
-    item = items[0]
-    return {
-        "videoId": item["id"]["videoId"],
-        "title": item["snippet"]["title"],
-        "channel": item["snippet"]["channelTitle"]
-    }
 
-@app.post("/api/bots/chat")
-async def bot_ai_chat(req: BotChatReq):
-    if not GEMINI_API_KEY:
-        raise HTTPException(status_code=404, detail="GEMINI_API_KEY not configured")
-    reply = await ask_gemini(
-        req.message,
-        system_hint=f"You are {req.bot_name}, a friendly {req.bot_role} inside the C9nnect social & gaming platform. Reply in 1-2 short, fun sentences.",
-        max_tokens=150,
+@app.delete("/api/admin/confessions/{confession_id}", dependencies=[Depends(verify_admin)])
+def admin_delete_confession(confession_id: int):
+    conn = get_db_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("DELETE FROM confessions WHERE id = %s", (confession_id,))
+            conn.commit()
+            return {"deleted": confession_id}
+    finally:
+        release_db_connection(conn)
+
+
+# ---------------------------------------------------------------------------
+# WebSocket Endpoint (/ws/{room})
+# ---------------------------------------------------------------------------
+@app.websocket("/ws/{room}")
+async def websocket_room(websocket: WebSocket, room: str, token: Optional[str] = Query(default=None)):
+    user_info: Dict[str, Any] = {"username": f"Guest_{secrets.token_hex(2)}"}
+    if token:
+        claims = decode_token(token)
+        if claims and claims.get("username"):
+            user_info["username"] = claims["username"]
+
+    await manager.connect(room, websocket, user_info)
+    await manager.broadcast(
+        room,
+        {
+            "type": "presence_join",
+            "room": room,
+            "user": user_info["username"],
+            "timestamp": now_utc().isoformat(),
+        },
     )
-    if not reply:
-        raise HTTPException(status_code=502, detail="Failed to get response from Gemini")
-    return {"reply": reply}
+    await manager.broadcast_presence()
 
-@app.get("/api/stories")
-def get_stories():
-    conn = get_conn()
     try:
-        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
-            cur.execute("SELECT * FROM status_drops WHERE created_at > NOW() - INTERVAL '24 hours' ORDER BY id DESC LIMIT 20")
-            return cur.fetchall()
-    finally:
-        release_conn(conn)
+        while True:
+            raw = await websocket.receive_text()
+            manager.online_users[user_info["username"]] = now_ts()
+            try:
+                data = json.loads(raw)
+            except Exception:
+                data = {"type": "chat", "content": raw}
 
-@app.post("/api/stories")
-async def create_story(req: StoryDropReq):
-    conn = get_conn()
-    try:
-        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
-            cur.execute(
-                "INSERT INTO status_drops (author_name, mood, text) VALUES (%s, %s, %s) RETURNING *",
-                (req.author_name[:64], req.mood[:16], req.text[:180]),
-            )
-            created = cur.fetchone()
-    finally:
-        release_conn(conn)
-    await ws_manager.broadcast_all({"type": "story:new", "data": created})
-    return created
+            msg_type = data.get("type", "chat")
 
-@app.get("/api/stats/summary")
-def platform_summary():
-    conn = get_conn()
-    try:
-        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
-            cur.execute("SELECT COUNT(*) AS total_users, COALESCE(SUM(honor), 0) AS total_honor FROM users")
-            u = cur.fetchone()
-            cur.execute("SELECT COUNT(*) AS total_confessions FROM confessions")
-            c = cur.fetchone()
-            return {**u, **c}
-    finally:
-        release_conn(conn)
+            if msg_type == "ping":
+                await manager.send_personal(websocket, {"type": "pong", "ts": now_ts()})
+
+            elif msg_type == "typing":
+                await manager.broadcast(
+                    room,
+                    {
+                        "type": "typing",
+                        "room": room,
+                        "user": user_info["username"],
+                        "is_typing": bool(data.get("is_typing", True)),
+                    },
+                )
+
+            elif msg_type == "chat":
+                content = (data.get("content") or "").strip()
+                if not content:
+                    continue
+                conn = get_db_connection()
+                try:
+                    with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                        cur.execute(
+                            """
+                            INSERT INTO chat_messages (room, sender, is_bot, content)
+                            VALUES (%s, %s, FALSE, %s)
+                            RETURNING *
+                            """,
+                            (room, user_info["username"], content),
+                        )
+                        saved = dict(cur.fetchone())
+                        bot_msgs = await process_bot_command(conn, room, user_info["username"], content)
+                        conn.commit()
+
+                    await manager.broadcast(room, {"type": "chat_message", "message": saved})
+                    for bm in (bot_msgs or []):
+                        await manager.broadcast(room, {"type": "bot_message", "message": bm})
+                finally:
+                    release_db_connection(conn)
+
+            elif msg_type == "media_sync":
+                # Relay low-latency client sync ticks to peers in the same room
+                await manager.broadcast(
+                    room,
+                    {
+                        "type": "media_sync",
+                        "channel_key": data.get("channel_key", room),
+                        "lounge_id": data.get("lounge_id"),
+                        "video_id": data.get("video_id"),
+                        "title": data.get("title"),
+                        "is_playing": data.get("is_playing"),
+                        "base_position": data.get("base_position"),
+                        "updated_at": data.get("updated_at") or now_ts(),
+                        "updated_by": user_info["username"],
+                    },
+                )
+
+    except WebSocketDisconnect:
+        await manager.disconnect(room, websocket)
+        await manager.broadcast_presence()
+    except Exception:
+        await manager.disconnect(room, websocket)
+        await manager.broadcast_presence()

@@ -9,7 +9,7 @@ import time
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 from email.message import EmailMessage
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Union
 
 import httpx
 import jwt
@@ -517,9 +517,6 @@ def init_db():
             """)
 
             migrations = [
-                "CREATE SEQUENCE IF NOT EXISTS lounges_id_seq",
-                "ALTER TABLE lounges ALTER COLUMN id SET DEFAULT nextval('lounges_id_seq')",
-                "SELECT setval('lounges_id_seq', COALESCE((SELECT MAX(id) FROM lounges), 0) + 1, false)",
                 "ALTER TABLE users ADD COLUMN IF NOT EXISTS role_title VARCHAR(64) DEFAULT 'Voyager'",
                 "ALTER TABLE users ADD COLUMN IF NOT EXISTS birthday VARCHAR(16)",
                 "ALTER TABLE users ADD COLUMN IF NOT EXISTS captcha_verified BOOLEAN DEFAULT TRUE",
@@ -550,6 +547,56 @@ def init_db():
             for stmt in migrations:
                 cur.execute(stmt)
 
+            # Ensure auto-increment sequence defaults work for both integer and text id columns
+            serial_tables = [
+                "users",
+                "friends",
+                "direct_messages",
+                "chat_messages",
+                "confessions",
+                "confession_replies",
+                "lounges",
+                "stories",
+                "polls",
+                "arcade_scores",
+                "giveaways",
+                "tickets",
+            ]
+            for tbl in serial_tables:
+                cur.execute(
+                    """
+                    SELECT data_type
+                    FROM information_schema.columns
+                    WHERE table_schema = 'public' AND table_name = %s AND column_name = 'id'
+                    """,
+                    (tbl,),
+                )
+                col_info = cur.fetchone()
+                if not col_info:
+                    continue
+                dtype = (col_info[0] or "").lower()
+                seq_name = f"{tbl}_id_seq"
+                cur.execute(f"CREATE SEQUENCE IF NOT EXISTS {seq_name}")
+                if dtype in ("text", "character varying", "varchar"):
+                    cur.execute(f"SELECT COUNT(*) FROM {tbl} WHERE id !~ '^[0-9]+$'")
+                    non_numeric = cur.fetchone()[0]
+                    if non_numeric == 0:
+                        cur.execute(f"ALTER TABLE {tbl} ALTER COLUMN id TYPE INTEGER USING id::integer")
+                        cur.execute(f"ALTER TABLE {tbl} ALTER COLUMN id SET DEFAULT nextval('{seq_name}')")
+                        cur.execute(
+                            f"SELECT setval('{seq_name}', COALESCE((SELECT MAX(id) FROM {tbl}), 0) + 1, false)"
+                        )
+                    else:
+                        cur.execute(f"ALTER TABLE {tbl} ALTER COLUMN id SET DEFAULT nextval('{seq_name}')::text")
+                        cur.execute(
+                            f"SELECT setval('{seq_name}', COALESCE((SELECT MAX(id::integer) FROM {tbl} WHERE id ~ '^[0-9]+$'), 0) + 1, false)"
+                        )
+                else:
+                    cur.execute(f"ALTER TABLE {tbl} ALTER COLUMN id SET DEFAULT nextval('{seq_name}')")
+                    cur.execute(
+                        f"SELECT setval('{seq_name}', COALESCE((SELECT MAX(id) FROM {tbl}), 0) + 1, false)"
+                    )
+
             cur.execute("SELECT id FROM guild_boss WHERE id = 1")
             if not cur.fetchone():
                 cur.execute(
@@ -576,19 +623,18 @@ def init_db():
             if cur.fetchone()[0] == 0:
                 ts = now_ts()
                 default_lounges = [
-                    (1, "Sakura Shrine Lounge", "Cherry blossoms, lofi & late-night talks", "sakura", "System", '["System"]', "5qap5aO4i9A", "Lofi Hip Hop Radio - Beats to Sleep/Chill to", ts),
-                    (2, "Neon Nightcore & Cinema", "Synchronized watchparty & synthwave", "cyberpunk", "System", '["System"]', "jfKfPfyJRdk", "Lofi Hip Hop Radio - Chill Session", ts),
-                    (3, "Ancient Ruins Campfire", "Cozy acoustic & guild strategy", "ruins", "System", '["System"]', "4xDzrJKXOOY", "Synthwave Radio - Beats to Chill/Game to", ts),
+                    ("Sakura Shrine Lounge", "Cherry blossoms, lofi & late-night talks", "sakura", "System", '["System"]', "5qap5aO4i9A", "Lofi Hip Hop Radio - Beats to Sleep/Chill to", ts),
+                    ("Neon Nightcore & Cinema", "Synchronized watchparty & synthwave", "cyberpunk", "System", '["System"]', "jfKfPfyJRdk", "Lofi Hip Hop Radio - Chill Session", ts),
+                    ("Ancient Ruins Campfire", "Cozy acoustic & guild strategy", "ruins", "System", '["System"]', "4xDzrJKXOOY", "Synthwave Radio - Beats to Chill/Game to", ts),
                 ]
-                for lid, name, topic, theme, creator, members, vid, title, t in default_lounges:
+                for name, topic, theme, creator, members, vid, title, t in default_lounges:
                     cur.execute(
                         """
-                        INSERT INTO lounges (id, name, topic, theme, creator, members, video_id, video_title, is_playing, base_position, updated_at)
-                        VALUES (%s, %s, %s, %s, %s, %s::jsonb, %s, %s, TRUE, 0.0, %s)
+                        INSERT INTO lounges (name, topic, theme, creator, members, video_id, video_title, is_playing, base_position, updated_at)
+                        VALUES (%s, %s, %s, %s, %s::jsonb, %s, %s, TRUE, 0.0, %s)
                         """,
-                        (lid, name, topic, theme, creator, members, vid, title, t),
+                        (name, topic, theme, creator, members, vid, title, t),
                     )
-                cur.execute("SELECT setval('lounges_id_seq', 4, false)")
 
             conn.commit()
     finally:
@@ -967,13 +1013,13 @@ async def process_bot_command(conn, room: str, username: str, raw_text: str) -> 
                 title = found["title"]
                 ts = now_ts()
                 if room.startswith("lounge:"):
-                    lid = int(room.split(":", 1)[1])
+                    lid = room.split(":", 1)[1].strip()
                     with conn.cursor() as cur:
                         cur.execute(
                             """
                             UPDATE lounges
                             SET video_id = %s, video_title = %s, is_playing = TRUE, base_position = 0.0, updated_at = %s
-                            WHERE id = %s
+                            WHERE id::text = %s
                             """,
                             (vid, title, ts, lid),
                         )
@@ -1250,7 +1296,7 @@ class LoungeCreateReq(BaseModel):
 
 class MediaSyncReq(BaseModel):
     channel_key: str = "entertainment"
-    lounge_id: Optional[int] = None
+    lounge_id: Optional[Union[int, str]] = None
     action: str = "sync"
     video_url_or_id: Optional[str] = None
     title: Optional[str] = None
@@ -1814,12 +1860,13 @@ async def create_lounge(req: LoungeCreateReq, current_user: Dict[str, Any] = Dep
 
 
 @app.post("/api/lounges/{lounge_id}/join")
-async def join_lounge(lounge_id: int, current_user: Dict[str, Any] = Depends(get_current_user)):
+async def join_lounge(lounge_id: Union[int, str], current_user: Dict[str, Any] = Depends(get_current_user)):
     uname = current_user["username"]
+    lid_str = str(lounge_id)
     conn = get_db_connection()
     try:
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
-            cur.execute("SELECT * FROM lounges WHERE id = %s", (lounge_id,))
+            cur.execute("SELECT * FROM lounges WHERE id::text = %s", (lid_str,))
             l = cur.fetchone()
             if not l:
                 raise HTTPException(status_code=404, detail="Lounge not found")
@@ -1828,9 +1875,9 @@ async def join_lounge(lounge_id: int, current_user: Dict[str, Any] = Depends(get
                 if len(members) >= MAX_LOUNGE_MEMBERS:
                     raise HTTPException(status_code=400, detail="Lounge is full")
                 members.append(uname)
-                cur.execute("UPDATE lounges SET members = %s::jsonb WHERE id = %s", (json.dumps(members), lounge_id))
+                cur.execute("UPDATE lounges SET members = %s::jsonb WHERE id::text = %s", (json.dumps(members), lid_str))
                 conn.commit()
-            cur.execute("SELECT * FROM lounges WHERE id = %s", (lounge_id,))
+            cur.execute("SELECT * FROM lounges WHERE id::text = %s", (lid_str,))
             updated = dict(cur.fetchone())
         await manager.broadcast("global", {"type": "lounge_updated", "lounge": updated})
         await manager.broadcast(f"lounge:{lounge_id}", {"type": "lounge_updated", "lounge": updated})
@@ -1840,17 +1887,18 @@ async def join_lounge(lounge_id: int, current_user: Dict[str, Any] = Depends(get
 
 
 @app.post("/api/lounges/{lounge_id}/leave")
-async def leave_lounge(lounge_id: int, current_user: Dict[str, Any] = Depends(get_current_user)):
+async def leave_lounge(lounge_id: Union[int, str], current_user: Dict[str, Any] = Depends(get_current_user)):
     uname = current_user["username"]
+    lid_str = str(lounge_id)
     conn = get_db_connection()
     try:
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
-            cur.execute("SELECT * FROM lounges WHERE id = %s", (lounge_id,))
+            cur.execute("SELECT * FROM lounges WHERE id::text = %s", (lid_str,))
             l = cur.fetchone()
             if not l:
                 raise HTTPException(status_code=404, detail="Lounge not found")
             members = [m for m in (l["members"] or []) if m != uname]
-            cur.execute("UPDATE lounges SET members = %s::jsonb WHERE id = %s RETURNING *", (json.dumps(members), lounge_id))
+            cur.execute("UPDATE lounges SET members = %s::jsonb WHERE id::text = %s RETURNING *", (json.dumps(members), lid_str))
             updated = dict(cur.fetchone())
             conn.commit()
         await manager.broadcast("global", {"type": "lounge_updated", "lounge": updated})
@@ -1861,13 +1909,13 @@ async def leave_lounge(lounge_id: int, current_user: Dict[str, Any] = Depends(ge
 
 
 @app.get("/api/media/{channel_key}")
-def get_media_state(channel_key: str, lounge_id: Optional[int] = None):
+def get_media_state(channel_key: str, lounge_id: Optional[Union[int, str]] = None):
     conn = get_db_connection()
     try:
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
             t = now_ts()
             if lounge_id is not None:
-                cur.execute("SELECT * FROM lounges WHERE id = %s", (lounge_id,))
+                cur.execute("SELECT * FROM lounges WHERE id::text = %s", (str(lounge_id),))
                 l = cur.fetchone()
                 if not l:
                     raise HTTPException(status_code=404, detail="Lounge not found")
@@ -1921,7 +1969,8 @@ async def sync_media(req: MediaSyncReq, current_user: Dict[str, Any] = Depends(g
     try:
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
             if req.lounge_id is not None:
-                cur.execute("SELECT * FROM lounges WHERE id = %s", (req.lounge_id,))
+                lid_str = str(req.lounge_id)
+                cur.execute("SELECT * FROM lounges WHERE id::text = %s", (lid_str,))
                 row = cur.fetchone()
                 if not row:
                     raise HTTPException(status_code=404, detail="Lounge not found")
@@ -1961,10 +2010,10 @@ async def sync_media(req: MediaSyncReq, current_user: Dict[str, Any] = Depends(g
                     """
                     UPDATE lounges
                     SET video_id = %s, video_title = %s, queue = %s::jsonb, is_playing = %s, base_position = %s, updated_at = %s
-                    WHERE id = %s
+                    WHERE id::text = %s
                     RETURNING *
                     """,
-                    (vid, title, json.dumps(queue), playing, pos, ts, req.lounge_id),
+                    (vid, title, json.dumps(queue), playing, pos, ts, lid_str),
                 )
                 updated_l = dict(cur.fetchone())
                 conn.commit()

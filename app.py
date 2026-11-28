@@ -50,7 +50,7 @@ MAX_LOUNGE_MEMBERS = 12
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
-app = FastAPI(title="AetherRealm Synchronized Social, Voice & Gaming Hub", version="3.0.0")
+app = FastAPI(title="C9nnect Synchronized Social, Voice & Gaming Hub", version="3.0.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -195,12 +195,12 @@ manager = RoomManager()
 # Auth & Utility Functions
 # ---------------------------------------------------------------------------
 def hash_password(password: str) -> str:
-    return pwd_context.hash(password)
+    return pwd_context.hash((password or "")[:72])
 
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
     try:
-        return pwd_context.verify(plain_password, hashed_password)
+        return pwd_context.verify((plain_password or "")[:72], hashed_password)
     except Exception:
         return False
 
@@ -325,7 +325,7 @@ def init_db():
                     verification_code VARCHAR(12),
                     reset_code VARCHAR(12),
                     bio TEXT DEFAULT 'Exploring the realm.',
-                    affinity VARCHAR(64) DEFAULT 'Aether',
+                    affinity VARCHAR(64) DEFAULT 'C9',
                     theme VARCHAR(32) DEFAULT 'original',
                     sticker VARCHAR(32) DEFAULT '✨',
                     decoration VARCHAR(64) DEFAULT 'none',
@@ -459,7 +459,7 @@ def init_db():
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS guild_boss (
                     id INTEGER PRIMARY KEY,
-                    name VARCHAR(80) DEFAULT 'Void Sovereign Aetherion',
+                    name VARCHAR(80) DEFAULT 'Void Sovereign C9',
                     hp INTEGER DEFAULT 10000,
                     max_hp INTEGER DEFAULT 10000,
                     tier INTEGER DEFAULT 1,
@@ -547,6 +547,30 @@ def init_db():
             for stmt in migrations:
                 cur.execute(stmt)
 
+            # Relax legacy NOT NULL constraints from older C9nnect schema so inserts never fail
+            legacy_nullable_cols = [
+                ("users", "uid"),
+                ("users", "email"),
+                ("friends", "requester_uid"),
+                ("friends", "addressee_uid"),
+                ("confessions", "author_name"),
+                ("confessions", "text"),
+                ("confession_replies", "author_name"),
+                ("confession_replies", "text"),
+            ]
+            for tbl_name, col_name in legacy_nullable_cols:
+                cur.execute(
+                    """
+                    SELECT is_nullable
+                    FROM information_schema.columns
+                    WHERE table_schema = 'public' AND table_name = %s AND column_name = %s
+                    """,
+                    (tbl_name, col_name),
+                )
+                c_row = cur.fetchone()
+                if c_row and c_row[0] == "NO":
+                    cur.execute(f"ALTER TABLE {tbl_name} ALTER COLUMN {col_name} DROP NOT NULL")
+
             # Ensure auto-increment sequence defaults work for both integer and text id columns
             serial_tables = [
                 "users",
@@ -600,7 +624,7 @@ def init_db():
             cur.execute("SELECT id FROM guild_boss WHERE id = 1")
             if not cur.fetchone():
                 cur.execute(
-                    "INSERT INTO guild_boss (id, name, hp, max_hp, tier) VALUES (1, 'Void Sovereign Aetherion', 10000, 10000, 1)"
+                    "INSERT INTO guild_boss (id, name, hp, max_hp, tier) VALUES (1, 'Void Sovereign C9', 10000, 10000, 1)"
                 )
 
             cur.execute("SELECT id FROM counting_state WHERE id = 1")
@@ -737,8 +761,8 @@ async def search_youtube_first(query: str) -> Optional[Dict[str, str]]:
 
 def build_help_text() -> str:
     return (
-        "**🤖 Smart Bot Suite (AetherBot • MEE6 • ProBot • OwO • Carl-bot • Giveaway • Ticket)**\n"
-        "• **AetherBot (AI):** `/ask <anything>`, `/oracle <fortune>`, or mention `@aetherbot` in chat\n"
+        "**🤖 Smart Bot Suite (C9Bot • MEE6 • ProBot • OwO • Carl-bot • Giveaway • Ticket)**\n"
+        "• **C9Bot (AI):** `/ask <anything>`, `/oracle <fortune>`, or mention `@c9bot` in chat\n"
         "• **MEE6 & ProBot:** `/rank [user]`, `/roast [user]`, `/compliment [user]`, `/leaderboard`, `/stats`\n"
         "• **OwO Bot:** `owo hunt`, `owo battle`, `owo daily`, `owo cash`, `owo slots <bet>`\n"
         "• **YouTube Sync DJ:** `/play <song name or YouTube URL>` (searches YouTube & syncs for everyone!)\n"
@@ -768,17 +792,17 @@ async def process_bot_command(conn, room: str, username: str, raw_text: str) -> 
             row = dict(cur.fetchone())
         bot_replies.append(row)
 
-    # 1. Natural @AetherBot mention anywhere in chat
-    if "@aetherbot" in lower and not lower.startswith("/"):
-        clean_q = re.sub(r"@aetherbot", "", text, flags=re.IGNORECASE).strip() or "Hey AetherBot, what's up?"
+    # 1. Natural @C9Bot mention anywhere in chat
+    if "@c9bot" in lower and not lower.startswith("/"):
+        clean_q = re.sub(r"@c9bot", "", text, flags=re.IGNORECASE).strip() or "Hey C9Bot, what's up?"
         history = get_recent_room_context(conn, room, limit=8)
         reply = await call_smart_gemini(
-            f"You are AetherBot, the witty, intelligent AI host of AetherRealm talking to @{username} in #{room}. Be natural, sharp, and helpful (under 110 words).",
+            f"You are C9Bot, the witty, intelligent AI host of C9nnect talking to @{username} in #{room}. Be natural, sharp, and helpful (under 110 words).",
             clean_q,
             room_history=history,
             fallback=f"✨ Hey **@{username}**! Ask me anything or try `/play <song>` to sync music.",
         )
-        add_bot("AetherBot", reply)
+        add_bot("C9Bot", reply)
         return bot_replies
 
     # 2. Counting Bot auto-check in counting rooms
@@ -899,17 +923,17 @@ async def process_bot_command(conn, room: str, username: str, raw_text: str) -> 
     cmd = parts[0].lower()
 
     if cmd == "/help":
-        add_bot("AetherBot", build_help_text())
+        add_bot("C9Bot", build_help_text())
 
     elif cmd in ("/ask", "/oracle"):
         question = text[len(parts[0]):].strip() or "Give me a clever insight for today."
         history = get_recent_room_context(conn, room, limit=8)
         if cmd == "/oracle":
-            persona = f"You are the Mystical Oracle Bot of AetherRealm giving a dramatic, poetic yet witty prophecy/answer to @{username}. Under 100 words."
+            persona = f"You are the Mystical Oracle Bot of C9nnect giving a dramatic, poetic yet witty prophecy/answer to @{username}. Under 100 words."
             bot_label = "Oracle Bot"
         else:
-            persona = f"You are AetherBot, a smart, conversational AI assistant in AetherRealm talking to @{username}. Be insightful, direct, and engaging. Under 120 words."
-            bot_label = "AetherBot"
+            persona = f"You are C9Bot, a smart, conversational AI assistant in C9nnect talking to @{username}. Be insightful, direct, and engaging. Under 120 words."
+            bot_label = "C9Bot"
         reply = await call_smart_gemini(persona, question, room_history=history)
         add_bot(bot_label, f"**@{username}:** {reply}")
 
@@ -1005,7 +1029,7 @@ async def process_bot_command(conn, room: str, username: str, raw_text: str) -> 
     elif cmd == "/play":
         query_str = text[len(parts[0]):].strip()
         if not query_str:
-            add_bot("AetherBot", "🎧 Usage: `/play <song name or YouTube URL>` to search & sync for everyone!")
+            add_bot("C9Bot", "🎧 Usage: `/play <song name or YouTube URL>` to search & sync for everyone!")
         else:
             found = await search_youtube_first(query_str)
             if found:
@@ -1036,7 +1060,7 @@ async def process_bot_command(conn, room: str, username: str, raw_text: str) -> 
                     }
                     await manager.broadcast(room, payload)
                     await manager.broadcast("global", payload)
-                    add_bot("AetherBot", f"🎵 Synced **{title}** in this Lounge for everyone!")
+                    add_bot("C9Bot", f"🎵 Synced **{title}** in this Lounge for everyone!")
                 else:
                     with conn.cursor() as cur:
                         cur.execute(
@@ -1060,9 +1084,9 @@ async def process_bot_command(conn, room: str, username: str, raw_text: str) -> 
                             "updated_by": username,
                         },
                     )
-                    add_bot("AetherBot", f"🎬 Synced **{title}** in **Sync Cinema & YT** for everyone!")
+                    add_bot("C9Bot", f"🎬 Synced **{title}** in **Sync Cinema & YT** for everyone!")
             else:
-                add_bot("AetherBot", "❌ Could not find a matching YouTube video. Try pasting a YouTube URL.")
+                add_bot("C9Bot", "❌ Could not find a matching YouTube video. Try pasting a YouTube URL.")
 
     elif cmd == "/gstart":
         sec = int(parts[1]) if len(parts) > 1 and parts[1].isdigit() else 120
@@ -1216,12 +1240,12 @@ async def process_bot_command(conn, room: str, username: str, raw_text: str) -> 
         # Treat unknown slash command as a smart AI query instead of an error
         history = get_recent_room_context(conn, room, limit=6)
         reply = await call_smart_gemini(
-            f"You are AetherBot in AetherRealm replying to @{username}. If they typed a custom slash command `{text}`, play along cleverly or help them. Under 90 words.",
+            f"You are C9Bot in C9nnect replying to @{username}. If they typed a custom slash command `{text}`, play along cleverly or help them. Under 90 words.",
             text,
             room_history=history,
             fallback=f"🤔 Command `{cmd}` not recognized. Type `/help` to view all bot commands.",
         )
-        add_bot("AetherBot", reply)
+        add_bot("C9Bot", reply)
 
     return bot_replies
 
@@ -1380,19 +1404,39 @@ def register(req: RegisterReq):
 
             cur.execute(
                 """
-                INSERT INTO users (username, email, password_hash, verification_code, is_verified, birthday, xp, level, honor, cowoncy)
-                VALUES (%s, %s, %s, %s, TRUE, %s, 25, 1, 100, 250)
-                RETURNING id, username, email, bio, affinity, theme, sticker, decoration, role_title, xp, level, honor, cowoncy, inventory
-                """,
-                (clean_user, req.email.strip() if req.email else None, pw_hash, code, req.birthday),
+                SELECT 1 FROM information_schema.columns
+                WHERE table_schema = 'public' AND table_name = 'users' AND column_name = 'uid'
+                """
             )
+            has_uid_col = bool(cur.fetchone())
+            clean_email = req.email.strip() if (req.email and req.email.strip()) else None
+
+            if has_uid_col:
+                generated_uid = f"u_{secrets.token_hex(8)}"
+                cur.execute(
+                    """
+                    INSERT INTO users (uid, username, email, password_hash, verification_code, is_verified, birthday, xp, level, honor, cowoncy)
+                    VALUES (%s, %s, %s, %s, %s, TRUE, %s, 25, 1, 100, 250)
+                    RETURNING id, username, email, bio, affinity, theme, sticker, decoration, role_title, xp, level, honor, cowoncy, inventory
+                    """,
+                    (generated_uid, clean_user, clean_email, pw_hash, code, req.birthday),
+                )
+            else:
+                cur.execute(
+                    """
+                    INSERT INTO users (username, email, password_hash, verification_code, is_verified, birthday, xp, level, honor, cowoncy)
+                    VALUES (%s, %s, %s, %s, TRUE, %s, 25, 1, 100, 250)
+                    RETURNING id, username, email, bio, affinity, theme, sticker, decoration, role_title, xp, level, honor, cowoncy, inventory
+                    """,
+                    (clean_user, clean_email, pw_hash, code, req.birthday),
+                )
             user = dict(cur.fetchone())
             cur.execute(
                 """
                 INSERT INTO chat_messages (room, sender, is_bot, bot_name, content)
                 VALUES ('global', 'Welcomer', TRUE, 'Welcomer', %s)
                 """,
-                (f"🎉 Welcome **@{clean_user}** to AetherRealm! Say hi, join a voice lounge, or type `/help`.",),
+                (f"🎉 Welcome **@{clean_user}** to C9nnect! Say hi, join a voice lounge, or type `/help`.",),
             )
             conn.commit()
 

@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0" />
-  <title>AetherRealm — Synchronized Social, Lounges & Arcade Hub</title>
+  <title>AetherRealm — Synchronized Social, Voice Lounges & Arcade Hub</title>
   <style>
     :root {
       --bg-primary: #0b0e17;
@@ -74,7 +74,6 @@
       transition: background 0.5s ease;
     }
 
-    /* Ambient Theme Particles */
     #ambient-canvas {
       position: fixed;
       inset: 0;
@@ -83,7 +82,6 @@
       opacity: 0.55;
     }
 
-    /* Keyframe Animations */
     @keyframes fadeSlideUp {
       from { opacity: 0; transform: translateY(14px) scale(0.985); }
       to { opacity: 1; transform: translateY(0) scale(1); }
@@ -114,7 +112,6 @@
       40% { transform: scale(1.1); opacity: 1; }
     }
 
-    /* App Shell */
     .app-shell {
       position: relative;
       z-index: 1;
@@ -123,7 +120,6 @@
       min-height: 100vh;
     }
 
-    /* Sidebar Navigation */
     .sidebar {
       background: var(--bg-glass);
       backdrop-filter: blur(18px);
@@ -224,7 +220,6 @@
       font-weight: 700;
     }
 
-    /* Main Content Area */
     .main-area {
       padding: 20px 24px 80px;
       max-width: 1380px;
@@ -262,7 +257,6 @@
       font-weight: 600;
     }
 
-    /* Sections & Cards */
     .tab-section {
       display: none;
       animation: fadeSlideUp 0.35s ease forwards;
@@ -276,12 +270,6 @@
       display: grid;
       grid-template-columns: repeat(2, minmax(0, 1fr));
       gap: 18px;
-    }
-
-    .grid-3 {
-      display: grid;
-      grid-template-columns: repeat(3, minmax(0, 1fr));
-      gap: 16px;
     }
 
     .card {
@@ -306,7 +294,6 @@
       gap: 8px;
     }
 
-    /* Inputs & Buttons */
     input, select, textarea {
       width: 100%;
       background: rgba(10, 14, 24, 0.72);
@@ -340,13 +327,18 @@
       gap: 6px;
     }
 
-    .btn:hover {
+    .btn:hover:not(:disabled) {
       filter: brightness(1.1);
       transform: translateY(-1px);
       box-shadow: 0 4px 16px var(--accent-glow);
     }
 
-    .btn:active {
+    .btn:disabled {
+      opacity: 0.45;
+      cursor: not-allowed;
+    }
+
+    .btn:active:not(:disabled) {
       transform: scale(0.96);
     }
 
@@ -368,7 +360,18 @@
       align-items: center;
     }
 
-    /* Chat & Bot Feed */
+    .voice-bar {
+      margin-bottom: 10px;
+      padding: 8px 11px;
+      border-radius: 10px;
+      background: rgba(16, 185, 129, 0.11);
+      border: 1px solid rgba(16, 185, 129, 0.35);
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      align-items: center;
+    }
+
     .chat-box {
       height: 390px;
       overflow-y: auto;
@@ -430,7 +433,6 @@
     .typing-dots span:nth-child(2) { animation-delay: 0.2s; }
     .typing-dots span:nth-child(3) { animation-delay: 0.4s; }
 
-    /* Audio Equalizer Visualizer */
     .eq-bars {
       display: inline-flex;
       align-items: flex-end;
@@ -448,7 +450,6 @@
     .eq-bars span:nth-child(4) { animation-delay: 0.54s; }
     .eq-bars.paused span { animation-play-state: paused; height: 25%; }
 
-    /* Video Wrapper */
     .yt-frame-wrap {
       position: relative;
       width: 100%;
@@ -463,7 +464,6 @@
       height: 100%;
     }
 
-    /* Boss HP Bar */
     .hp-bar-outer {
       width: 100%;
       height: 18px;
@@ -479,7 +479,6 @@
       transition: width 0.35s cubic-bezier(0.22, 1, 0.36, 1);
     }
 
-    /* Auth Modal */
     .modal-backdrop {
       position: fixed;
       inset: 0;
@@ -500,7 +499,6 @@
       animation: fadeSlideUp 0.3s ease;
     }
 
-    /* Toast Notifications */
     #toast-container {
       position: fixed;
       bottom: 18px;
@@ -521,7 +519,6 @@
       animation: msgPop 0.25s ease;
     }
 
-    /* Mobile Responsive */
     @media (max-width: 920px) {
       .app-shell { grid-template-columns: 1fr; }
       .sidebar {
@@ -535,7 +532,7 @@
       }
       .brand { width: 100%; padding-bottom: 8px; }
       .nav-btn { width: auto; flex: 1 1 auto; justify-content: center; padding: 8px 10px; font-size: 0.8rem; }
-      .grid-2, .grid-3 { grid-template-columns: 1fr; }
+      .grid-2 { grid-template-columns: 1fr !important; }
     }
   </style>
 </head>
@@ -550,7 +547,7 @@
         <div class="brand-orb">✦</div>
         <div>
           <h2 style="font-size: 1.2rem;">Enter AetherRealm</h2>
-          <p style="font-size: 0.8rem; color: var(--text-muted);">Global Synchronized Lounges, Bots & Arcade</p>
+          <p style="font-size: 0.8rem; color: var(--text-muted);">Global Synchronized Voice Lounges, AI Bots & Arcade</p>
         </div>
       </div>
 
@@ -562,7 +559,7 @@
       <div style="display:flex; flex-direction:column; gap:10px;">
         <input id="auth-username" placeholder="Username (e.g. Kira)" />
         <input id="auth-email" placeholder="Email (optional for recovery)" style="display:none;" />
-        <input id="auth-password" type="password" placeholder="Password" />
+        <input id="auth-password" type="password" placeholder="Password" onkeydown="if(event.key==='Enter') submitAuth()" />
         <button class="btn" onclick="submitAuth()">Launch Realm →</button>
         <p id="auth-error" style="color: var(--danger); font-size: 0.8rem;"></p>
       </div>
@@ -587,12 +584,12 @@
 
       <button class="nav-btn active" data-tab="sanctum" onclick="openTab('sanctum', this)">🏛️ Sanctum (Home)</button>
       <button class="nav-btn" data-tab="tavern" onclick="openTab('tavern', this)">💬 Global Chat & Bots</button>
-      <button class="nav-btn" data-tab="lounges" onclick="openTab('lounges', this)">🎧 Discord Lounges <span class="badge-count" id="lounge-badge">3</span></button>
+      <button class="nav-btn" data-tab="lounges" onclick="openTab('lounges', this)">🎧 Voice & Music Lounges <span class="badge-count" id="lounge-badge">3</span></button>
       <button class="nav-btn" data-tab="entertainment" onclick="openTab('entertainment', this)">🎬 Sync Cinema & YT</button>
       <button class="nav-btn" data-tab="dms" onclick="openTab('dms', this)">💌 Fate & DMs</button>
       <button class="nav-btn" data-tab="scrolls" onclick="openTab('scrolls', this)">📜 Void Scrolls</button>
       <button class="nav-btn" data-tab="arena" onclick="openTab('arena', this)">⚔️ Guild Boss</button>
-      <button class="nav-btn" data-tab="arcade" onclick="openTab('arcade', this)">🕹️ Arcade (7 Games)</button>
+      <button class="nav-btn" data-tab="arcade" onclick="openTab('arcade', this)">🕹️ Arcade (4 Games)</button>
       <button class="nav-btn" data-tab="hero" onclick="openTab('hero', this)">🧙 Hero & Shop</button>
       <button class="nav-btn" data-tab="tools" onclick="openTab('tools', this)">🧰 Focus & Tools</button>
       <button class="nav-btn" data-tab="secret" onclick="openTab('secret', this)">🔐 Secret Vault</button>
@@ -600,7 +597,6 @@
 
     <!-- Main Workspace -->
     <main class="main-area">
-      <!-- Top Status Header -->
       <header class="topbar">
         <div class="user-stats-strip">
           <strong id="hdr-username">@Guest</strong>
@@ -626,7 +622,7 @@
         <div class="grid-2" style="margin-bottom:18px;">
           <div class="card">
             <h2>🌐 Live Online Citizens</h2>
-            <p style="font-size:0.82rem; color:var(--text-muted); margin-bottom:10px;">Click any user to send Honor (+25) or open a Direct Message.</p>
+            <p style="font-size:0.82rem; color:var(--text-muted); margin-bottom:10px;">Send Honor (+25) or start a live Direct Message.</p>
             <div id="sanctum-users-list" style="display:flex; flex-direction:column; gap:8px; max-height:260px; overflow-y:auto;"></div>
           </div>
 
@@ -642,7 +638,7 @@
 
         <div class="grid-2">
           <div class="card">
-            <h2>📊 Live Community Polls (Simple Poll Bot)</h2>
+            <h2>📊 Live Community Polls</h2>
             <div class="row" style="margin-bottom:8px;">
               <input id="poll-q" placeholder="Poll question..." />
             </div>
@@ -654,21 +650,21 @@
           </div>
 
           <div class="card">
-            <h2>🎧 Active Synchronized Lounges</h2>
-            <p style="font-size:0.82rem; color:var(--text-muted); margin-bottom:10px;">Jump into any room to listen & watch YouTube in real-time sync.</p>
+            <h2>🎧 Active Voice & Music Lounges</h2>
+            <p style="font-size:0.82rem; color:var(--text-muted); margin-bottom:10px;">Join any lounge to talk on mic, chat, and listen in real-time sync.</p>
             <div id="sanctum-lounges-preview" style="display:flex; flex-direction:column; gap:8px;"></div>
           </div>
         </div>
       </section>
 
-      <!-- 2. GLOBAL CHAT & DISCORD BOTS -->
+      <!-- 2. GLOBAL CHAT & SMART DISCORD BOTS -->
       <section id="tab-tavern" class="tab-section">
         <div class="grid-2" style="grid-template-columns: 2fr 1fr;">
           <div class="card">
             <h2>
               <span>💬 Synchronized Channel: <code id="active-room-label">#global</code></span>
               <select id="chat-room-select" onchange="switchChatRoom(this.value)" style="width:auto;">
-                <option value="global">#global (Main + All Bots)</option>
+                <option value="global">#global (Main + Smart AI Bots)</option>
                 <option value="counting">#counting (Counting Bot Streak)</option>
                 <option value="music-requests">#music-requests</option>
                 <option value="guild-strategy">#guild-strategy</option>
@@ -685,41 +681,43 @@
             <div id="typing-indicator" style="height:20px; font-size:0.78rem; color:var(--accent-2); margin-bottom:4px;"></div>
 
             <div class="row">
-              <input id="chat-input" placeholder="Message #global or run /help, /ask, owo hunt, /gstart, /poll..." onkeydown="handleChatKey(event)" />
+              <input id="chat-input" placeholder="Chat, @AetherBot, or run /ask, /play <song>, owo hunt, /roast, /gstart..." onkeydown="handleChatKey(event)" />
               <button class="btn" onclick="sendChatMessage()">Send</button>
             </div>
           </div>
 
           <div class="card">
-            <h3>🤖 One-Click Bot Triggers</h3>
-            <p style="font-size:0.78rem; color:var(--text-muted); margin-bottom:10px;">Powered by AetherBot, MEE6, ProBot, OwO, Carl-bot, GiveawayBot, Ticket Tool & Wick.</p>
+            <h3>🤖 Smart Bot Triggers</h3>
+            <p style="font-size:0.78rem; color:var(--text-muted); margin-bottom:10px;">Powered by Gemini AI, YouTube Search, MEE6, ProBot, OwO, Carl-bot, GiveawayBot & Wick.</p>
             <div style="display:flex; flex-wrap:wrap; gap:6px;">
               <button class="btn btn-ghost btn-sm" onclick="quickBotCmd('/help')">📜 /help</button>
-              <button class="btn btn-ghost btn-sm" onclick="quickBotCmd('/rank')">📊 MEE6 /rank</button>
+              <button class="btn btn-ghost btn-sm" onclick="quickBotCmd('/ask What should we watch tonight?')">🧠 AI /ask</button>
+              <button class="btn btn-ghost btn-sm" onclick="quickBotCmd('/oracle Reveal my destiny')">🔮 /oracle</button>
+              <button class="btn btn-ghost btn-sm" onclick="quickBotCmd('/roast')">🔥 MEE6 /roast</button>
+              <button class="btn btn-ghost btn-sm" onclick="quickBotCmd('/compliment')">💖 /compliment</button>
+              <button class="btn btn-ghost btn-sm" onclick="quickBotCmd('/rank')">📊 /rank</button>
               <button class="btn btn-ghost btn-sm" onclick="quickBotCmd('/leaderboard')">🏆 ProBot Top</button>
               <button class="btn btn-ghost btn-sm" onclick="quickBotCmd('owo daily')">🎁 owo daily</button>
               <button class="btn btn-ghost btn-sm" onclick="quickBotCmd('owo hunt')">🦊 owo hunt</button>
               <button class="btn btn-ghost btn-sm" onclick="quickBotCmd('owo battle')">⚔️ owo battle</button>
               <button class="btn btn-ghost btn-sm" onclick="quickBotCmd('owo slots 50')">🎰 owo slots</button>
               <button class="btn btn-ghost btn-sm" onclick="quickBotCmd('/meme')">😂 Dyno /meme</button>
-              <button class="btn btn-ghost btn-sm" onclick="quickBotCmd('/roll 100')">🎲 Carl /roll</button>
               <button class="btn btn-ghost btn-sm" onclick="quickBotCmd('/gstart 90 500 Cowoncy')">🎉 GiveawayBot</button>
-              <button class="btn btn-ghost btn-sm" onclick="quickBotCmd('/ticket Need help with realm')">🎫 Ticket Tool</button>
+              <button class="btn btn-ghost btn-sm" onclick="quickBotCmd('/ticket Need support')">🎫 Ticket Tool</button>
               <button class="btn btn-ghost btn-sm" onclick="quickBotCmd('/stats')">📈 Statbot</button>
-              <button class="btn btn-ghost btn-sm" onclick="quickBotCmd('/captcha')">🛡️ Captcha.bot</button>
             </div>
           </div>
         </div>
       </section>
 
-      <!-- 3. DISCORD-STYLE SYNCHRONIZED LOUNGES -->
+      <!-- 3. DISCORD-STYLE SYNCHRONIZED VOICE & MUSIC LOUNGES -->
       <section id="tab-lounges" class="tab-section">
         <div class="card" style="margin-bottom:18px;">
-          <h2>➕ Create a Discord-Style Music & Hangout Lounge</h2>
+          <h2>➕ Create a Discord-Style Voice, Chat & Music Lounge</h2>
           <div class="row" style="flex-wrap:wrap;">
             <input id="new-lounge-name" placeholder="Lounge Name (e.g. Midnight Lofi Shrine)" style="flex:2;" />
             <input id="new-lounge-topic" placeholder="Topic / Vibe" style="flex:2;" />
-            <input id="new-lounge-yt" placeholder="YouTube URL or Video ID (optional)" style="flex:2;" />
+            <input id="new-lounge-yt" placeholder="Song name or YouTube URL (optional)" style="flex:2;" />
             <button class="btn" onclick="createLounge()">Create Lounge</button>
           </div>
         </div>
@@ -735,7 +733,14 @@
               <span>🔊 Active Lounge: <span id="cur-lounge-name">None Selected</span></span>
               <div class="eq-bars paused" id="lounge-eq"><span></span><span></span><span></span><span></span></div>
             </h2>
-            <p id="cur-lounge-members" style="font-size:0.82rem; color:var(--text-muted); margin-bottom:10px;">Join any lounge on the left to listen together in real time.</p>
+            <p id="cur-lounge-members" style="font-size:0.82rem; color:var(--text-muted); margin-bottom:10px;">Join any lounge on the left to talk on mic, chat & listen together.</p>
+
+            <!-- Live Mic / Voice Controls -->
+            <div class="voice-bar">
+              <button class="btn btn-sm" id="lounge-voice-btn" onclick="toggleVoiceChannel('lounge')">🎙️ Join Voice (Mic)</button>
+              <button class="btn btn-ghost btn-sm" id="lounge-mute-btn" onclick="toggleMicMute()" disabled>🔇 Mute</button>
+              <span id="lounge-voice-peers" style="font-size:0.78rem; color:var(--accent-2); flex:1;">Voice: Nobody connected yet</span>
+            </div>
 
             <div class="yt-frame-wrap" style="margin-bottom:10px;">
               <div id="lounge-yt-player"></div>
@@ -745,32 +750,40 @@
               <button class="btn btn-sm" onclick="controlLoungeMedia('play')">▶ Sync Play</button>
               <button class="btn btn-ghost btn-sm" onclick="controlLoungeMedia('pause')">⏸ Sync Pause</button>
               <button class="btn btn-ghost btn-sm" onclick="controlLoungeMedia('skip')">⏭ Skip Queue</button>
-              <button class="btn btn-ghost btn-sm" onclick="resyncLoungeNow()">🔄 Force Re-Sync</button>
+              <button class="btn btn-ghost btn-sm" onclick="resyncLoungeNow()">🔄 Re-Sync</button>
             </div>
 
             <div class="row" style="margin-bottom:10px;">
-              <input id="lounge-yt-input" placeholder="Paste YouTube URL or Video ID to play/queue for all members..." />
-              <button class="btn btn-sm" onclick="queueLoungeTrack()">Queue / Play</button>
+              <input id="lounge-yt-input" placeholder="Search song or paste YouTube URL for everyone..." onkeydown="if(event.key==='Enter') queueLoungeTrack()" />
+              <button class="btn btn-sm" onclick="queueLoungeTrack()">Play / Sync</button>
             </div>
 
-            <div id="lounge-chat-box" class="chat-box" style="height:170px;"></div>
+            <!-- Live Lounge Chat -->
+            <div id="lounge-chat-box" class="chat-box" style="height:185px;"></div>
             <div class="row">
-              <input id="lounge-chat-input" placeholder="Chat with lounge members..." onkeydown="if(event.key==='Enter') sendLoungeChat()" />
+              <input id="lounge-chat-input" placeholder="Chat or @AetherBot with lounge members..." onkeydown="if(event.key==='Enter') sendLoungeChat()" />
               <button class="btn btn-sm" onclick="sendLoungeChat()">Send</button>
             </div>
           </div>
         </div>
       </section>
 
-      <!-- 4. ENTERTAINMENT / SYNCHRONIZED YOUTUBE CINEMA -->
+      <!-- 4. ENTERTAINMENT / SYNCHRONIZED YOUTUBE CINEMA + MIC + CHAT -->
       <section id="tab-entertainment" class="tab-section">
-        <div class="grid-2" style="grid-template-columns: 1.7fr 1fr;">
+        <div class="grid-2" style="grid-template-columns: 1.65fr 1fr;">
           <div class="card">
             <h2>
               <span>🎬 Global Synchronized YouTube Cinema</span>
               <span class="stat-chip" id="cinema-sync-status">Synced Live</span>
             </h2>
             <p id="cinema-now-playing" style="font-size:0.85rem; color:var(--accent-2); margin-bottom:10px;">Now Playing: Lofi Hip Hop Radio</p>
+
+            <!-- Live Cinema Voice Bar -->
+            <div class="voice-bar">
+              <button class="btn btn-sm" id="cinema-voice-btn" onclick="toggleVoiceChannel('entertainment')">🎙️ Join Cinema Voice (Mic)</button>
+              <button class="btn btn-ghost btn-sm" id="cinema-mute-btn" onclick="toggleMicMute()" disabled>🔇 Mute</button>
+              <span id="cinema-voice-peers" style="font-size:0.78rem; color:var(--accent-2); flex:1;">Voice: Off</span>
+            </div>
 
             <div class="yt-frame-wrap" style="margin-bottom:12px;">
               <div id="cinema-yt-player"></div>
@@ -784,22 +797,30 @@
             </div>
 
             <div class="row">
-              <input id="cinema-url-input" placeholder="Paste any YouTube Link or 11-char Video ID..." />
+              <input id="cinema-url-input" placeholder="Search YouTube or paste Video URL / ID..." onkeydown="if(event.key==='Enter') playCinemaUrl()" />
               <button class="btn" onclick="playCinemaUrl()">Sync Play Now</button>
               <button class="btn btn-ghost" onclick="queueCinemaUrl()">+ Queue</button>
             </div>
           </div>
 
           <div class="card">
-            <h3>🔍 Search YouTube & Up Next Queue</h3>
-            <div class="row" style="margin-bottom:10px;">
+            <h3>🔍 YouTube Search & Queue</h3>
+            <div class="row" style="margin-bottom:8px;">
               <input id="yt-search-q" placeholder="Search YouTube videos..." onkeydown="if(event.key==='Enter') searchYoutube()" />
               <button class="btn btn-sm" onclick="searchYoutube()">Search</button>
             </div>
-            <div id="yt-search-results" style="display:flex; flex-direction:column; gap:8px; margin-bottom:14px;"></div>
+            <div id="yt-search-results" style="display:flex; flex-direction:column; gap:6px; max-height:140px; overflow-y:auto; margin-bottom:10px;"></div>
 
-            <h3 style="border-top:1px solid var(--border); padding-top:10px;">📜 Shared Queue</h3>
-            <div id="cinema-queue-list" style="display:flex; flex-direction:column; gap:6px; font-size:0.84rem;"></div>
+            <h3 style="border-top:1px solid var(--border); padding-top:8px;">📜 Shared Queue</h3>
+            <div id="cinema-queue-list" style="display:flex; flex-direction:column; gap:5px; font-size:0.82rem; max-height:85px; overflow-y:auto; margin-bottom:10px;"></div>
+
+            <!-- Live Watchparty Chat -->
+            <h3 style="border-top:1px solid var(--border); padding-top:8px;">💬 Watchparty Live Chat</h3>
+            <div id="cinema-chat-box" class="chat-box" style="height:200px;"></div>
+            <div class="row">
+              <input id="cinema-chat-input" placeholder="Talk while watching together..." onkeydown="if(event.key==='Enter') sendCinemaChat()" />
+              <button class="btn btn-sm" onclick="sendCinemaChat()">Send</button>
+            </div>
           </div>
         </div>
       </section>
@@ -866,7 +887,7 @@
         </div>
       </section>
 
-      <!-- 8. ARCADE (INTERACTIVE MINI-GAMES + LEADERBOARD) -->
+      <!-- 8. ARCADE -->
       <section id="tab-arcade" class="tab-section">
         <div class="grid-2" style="grid-template-columns: 1.6fr 1fr;">
           <div class="card">
@@ -913,7 +934,7 @@
 
           <div class="card">
             <h2>🛍️ Cowoncy Cosmetic Shop</h2>
-            <p style="font-size:0.82rem; color:var(--text-muted); margin-bottom:12px;">Unlock stickers & titles using Cowoncy earned from chat, bots & arcade.</p>
+            <p style="font-size:0.82rem; color:var(--text-muted); margin-bottom:12px;">Unlock stickers using Cowoncy earned from chat, bots & arcade.</p>
             <div style="display:flex; flex-direction:column; gap:8px;">
               <div class="row" style="justify-content:space-between; padding:8px; border:1px solid var(--border); border-radius:10px;">
                 <span>👑 Royal Crown Sticker</span>
@@ -983,7 +1004,6 @@
 
     let cinemaPlayer = null;
     let loungePlayer = null;
-    let ytReady = false;
     let pendingCinemaState = null;
     let pendingLoungeState = null;
 
@@ -991,7 +1011,6 @@
     let pomoSeconds = 1500;
 
     function onYouTubeIframeAPIReady() {
-      ytReady = true;
       cinemaPlayer = new YT.Player("cinema-yt-player", {
         videoId: "jfKfPfyJRdk",
         playerVars: { autoplay: 0, rel: 0, modestbranding: 1 },
@@ -1029,9 +1048,6 @@
       }
     }
 
-    // -------------------------------------------------------------------------
-    // Helpers & Toast
-    // -------------------------------------------------------------------------
     function showToast(text) {
       const box = document.getElementById("toast-container");
       const el = document.createElement("div");
@@ -1142,6 +1158,177 @@
     }
 
     // -------------------------------------------------------------------------
+    // WebRTC Voice Chat (Mic) Engine
+    // -------------------------------------------------------------------------
+    let localStream = null;
+    let voiceRoom = null;
+    let isMicMuted = false;
+    let peerConnections = {};
+    let voiceMembers = {};
+    const rtcConfig = { iceServers: [{ urls: "stun:stun.l.google.com:19302" }] };
+
+    async function toggleVoiceChannel(targetType) {
+      const targetRoom = targetType === "entertainment"
+        ? "entertainment"
+        : (activeLoungeId ? `lounge:${activeLoungeId}` : null);
+
+      if (!targetRoom) return showToast("Join a lounge first to use Lounge Voice!");
+
+      if (voiceRoom === targetRoom) {
+        leaveVoiceChannel();
+        return;
+      }
+      if (voiceRoom) leaveVoiceChannel();
+
+      try {
+        localStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+        voiceRoom = targetRoom;
+        isMicMuted = false;
+        voiceMembers[ME.username] = { muted: false, speaking: false };
+
+        connectRoomSocket(targetRoom);
+        updateVoiceUI();
+
+        setTimeout(() => {
+          sendSignal(targetRoom, {
+            type: "voice_state",
+            in_voice: true,
+            muted: false,
+            speaking: false
+          });
+        }, 350);
+
+        startSpeakingDetector();
+        showToast("🎙️ Mic connected! Others in the room can hear you.");
+      } catch (err) {
+        showToast("❌ Microphone permission denied or unavailable.");
+      }
+    }
+
+    function leaveVoiceChannel() {
+      if (voiceRoom) {
+        sendSignal(voiceRoom, { type: "voice_state", in_voice: false, muted: true, speaking: false });
+      }
+      if (localStream) {
+        localStream.getTracks().forEach(t => t.stop());
+        localStream = null;
+      }
+      Object.values(peerConnections).forEach(pc => pc.close());
+      peerConnections = {};
+      if (ME) delete voiceMembers[ME.username];
+      voiceRoom = null;
+      updateVoiceUI();
+    }
+
+    function toggleMicMute() {
+      if (!localStream || !voiceRoom) return;
+      isMicMuted = !isMicMuted;
+      localStream.getAudioTracks().forEach(t => (t.enabled = !isMicMuted));
+      if (ME) voiceMembers[ME.username] = { muted: isMicMuted, speaking: false };
+      sendSignal(voiceRoom, { type: "voice_state", in_voice: true, muted: isMicMuted, speaking: false });
+      updateVoiceUI();
+    }
+
+    function sendSignal(room, payload) {
+      const ws = sockets[room];
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify(payload));
+      }
+    }
+
+    function updateVoiceUI() {
+      const inLounge = voiceRoom && voiceRoom.startsWith("lounge:");
+      const inCinema = voiceRoom === "entertainment";
+
+      const lBtn = document.getElementById("lounge-voice-btn");
+      const lMute = document.getElementById("lounge-mute-btn");
+      if (lBtn) lBtn.textContent = inLounge ? "📴 Leave Voice" : "🎙️ Join Voice (Mic)";
+      if (lMute) {
+        lMute.disabled = !inLounge;
+        lMute.textContent = isMicMuted ? "🔊 Unmute" : "🔇 Mute";
+      }
+
+      const cBtn = document.getElementById("cinema-voice-btn");
+      const cMute = document.getElementById("cinema-mute-btn");
+      if (cBtn) cBtn.textContent = inCinema ? "📴 Leave Voice" : "🎙️ Join Cinema Voice (Mic)";
+      if (cMute) {
+        cMute.disabled = !inCinema;
+        cMute.textContent = isMicMuted ? "🔊 Unmute" : "🔇 Mute";
+      }
+
+      const summary = Object.entries(voiceMembers)
+        .map(([u, st]) => `${st.muted ? "🔇" : st.speaking ? "🟢" : "🎙️"} @${u}`)
+        .join(" • ") || "Nobody in voice yet";
+
+      const lPeers = document.getElementById("lounge-voice-peers");
+      const cPeers = document.getElementById("cinema-voice-peers");
+      if (lPeers) lPeers.textContent = `Voice: ${summary}`;
+      if (cPeers) cPeers.textContent = `Voice: ${summary}`;
+    }
+
+    function startSpeakingDetector() {
+      if (!localStream) return;
+      try {
+        const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        const src = audioCtx.createMediaStreamSource(localStream);
+        const analyser = audioCtx.createAnalyser();
+        analyser.fftSize = 256;
+        src.connect(analyser);
+        const data = new Uint8Array(analyser.frequencyBinCount);
+        let lastSpeaking = false;
+
+        const tick = () => {
+          if (!localStream || !voiceRoom) return;
+          analyser.getByteFrequencyData(data);
+          const avg = data.reduce((a, b) => a + b, 0) / data.length;
+          const speaking = !isMicMuted && avg > 18;
+          if (speaking !== lastSpeaking && ME) {
+            lastSpeaking = speaking;
+            voiceMembers[ME.username] = { muted: isMicMuted, speaking };
+            sendSignal(voiceRoom, { type: "voice_state", in_voice: true, muted: isMicMuted, speaking });
+            updateVoiceUI();
+          }
+          requestAnimationFrame(tick);
+        };
+        tick();
+      } catch {}
+    }
+
+    async function createPeerConnection(remoteUser, room, isInitiator) {
+      if (peerConnections[remoteUser]) return peerConnections[remoteUser];
+      const pc = new RTCPeerConnection(rtcConfig);
+      peerConnections[remoteUser] = pc;
+
+      if (localStream) {
+        localStream.getTracks().forEach(track => pc.addTrack(track, localStream));
+      }
+
+      pc.onicecandidate = (e) => {
+        if (e.candidate) {
+          sendSignal(room, { type: "webrtc_signal", to: remoteUser, signal: { candidate: e.candidate } });
+        }
+      };
+
+      pc.ontrack = (e) => {
+        let audioEl = document.getElementById(`remote-audio-${remoteUser}`);
+        if (!audioEl) {
+          audioEl = document.createElement("audio");
+          audioEl.id = `remote-audio-${remoteUser}`;
+          audioEl.autoplay = true;
+          document.body.appendChild(audioEl);
+        }
+        audioEl.srcObject = e.streams[0];
+      };
+
+      if (isInitiator) {
+        const offer = await pc.createOffer();
+        await pc.setLocalDescription(offer);
+        sendSignal(room, { type: "webrtc_signal", to: remoteUser, signal: { sdp: pc.localDescription } });
+      }
+      return pc;
+    }
+
+    // -------------------------------------------------------------------------
     // WebSocket Multi-Room Engine
     // -------------------------------------------------------------------------
     function connectRoomSocket(room) {
@@ -1157,14 +1344,14 @@
 
       ws.onclose = () => {
         setTimeout(() => {
-          if (TOKEN && (room === "global" || room === currentChatRoom || room === `lounge:${activeLoungeId}`)) {
+          if (TOKEN && (room === "global" || room === currentChatRoom || room === "entertainment" || room === `lounge:${activeLoungeId}`)) {
             connectRoomSocket(room);
           }
         }, 3000);
       };
     }
 
-    function handleSocketEvent(room, data) {
+    async function handleSocketEvent(room, data) {
       if (data.type === "presence_sync") {
         document.getElementById("online-counter").textContent = `${data.online_count} Online Globally`;
         loadSanctumUsers();
@@ -1176,12 +1363,41 @@
         if (activeLoungeId && msg.room === `lounge:${activeLoungeId}`) {
           appendChatMessage("lounge-chat-box", msg);
         }
+        if (msg.room === "entertainment") {
+          appendChatMessage("cinema-chat-box", msg);
+        }
         if (data.xp_info && ME && msg.sender === ME.username) {
           ME.xp = data.xp_info.xp;
           ME.level = data.xp_info.level;
           ME.cowoncy = data.xp_info.cowoncy;
           updateHeaderUI();
           if (data.xp_info.leveled_up) showToast(`🎉 Level Up! You reached Level ${ME.level}!`);
+        }
+      } else if (data.type === "voice_state" && ME && data.user !== ME.username) {
+        if (data.in_voice) {
+          voiceMembers[data.user] = { muted: data.muted, speaking: data.speaking };
+          if (voiceRoom === room && !peerConnections[data.user]) {
+            await createPeerConnection(data.user, room, true);
+          }
+        } else {
+          delete voiceMembers[data.user];
+          if (peerConnections[data.user]) {
+            peerConnections[data.user].close();
+            delete peerConnections[data.user];
+          }
+        }
+        updateVoiceUI();
+      } else if (data.type === "webrtc_signal" && ME && data.to === ME.username && voiceRoom === room) {
+        const pc = await createPeerConnection(data.from, room, false);
+        if (data.signal.sdp) {
+          await pc.setRemoteDescription(new RTCSessionDescription(data.signal.sdp));
+          if (data.signal.sdp.type === "offer") {
+            const answer = await pc.createAnswer();
+            await pc.setLocalDescription(answer);
+            sendSignal(room, { type: "webrtc_signal", to: data.from, signal: { sdp: pc.localDescription } });
+          }
+        } else if (data.signal.candidate) {
+          await pc.addIceCandidate(new RTCIceCandidate(data.signal.candidate));
         }
       } else if (data.type === "typing") {
         if (data.room === currentChatRoom && ME && data.user !== ME.username) {
@@ -1314,7 +1530,7 @@
     }
 
     // -------------------------------------------------------------------------
-    // Chat & Discord Bots
+    // Chat & Smart Bots
     // -------------------------------------------------------------------------
     async function switchChatRoom(room) {
       currentChatRoom = room;
@@ -1400,7 +1616,7 @@
     }
 
     // -------------------------------------------------------------------------
-    // Discord-Style Lounges
+    // Discord-Style Voice & Music Lounges
     // -------------------------------------------------------------------------
     async function loadLounges() {
       const data = await api("/api/lounges");
@@ -1417,7 +1633,7 @@
         card.innerHTML = `
           <div class="row" style="justify-content:space-between; margin-bottom:4px;">
             <strong>🎧 ${escapeHtml(l.name)}</strong>
-            <span class="stat-chip">${members.length}/12 Members</span>
+            <span class="stat-chip">${members.length}/12 • 🎙️ ${l.voice_count || 0}</span>
           </div>
           <p style="font-size:0.8rem; color:var(--text-muted); margin-bottom:8px;">${escapeHtml(l.topic)} • Playing: ${escapeHtml(l.video_title || l.video_id)}</p>
           <div class="row" style="justify-content:space-between;">
@@ -1438,7 +1654,7 @@
 
     async function createLounge() {
       const name = document.getElementById("new-lounge-name").value.trim();
-      const topic = document.getElementById("new-lounge-topic").value.trim() || "Chill & Sync";
+      const topic = document.getElementById("new-lounge-topic").value.trim() || "Voice, Chat & Music";
       const yt = document.getElementById("new-lounge-yt").value.trim();
       if (!name) return showToast("Enter a lounge name");
       const res = await api("/api/lounges", {
@@ -1455,7 +1671,7 @@
       const l = res.lounge;
       activeLoungeId = l.id;
       document.getElementById("cur-lounge-name").textContent = l.name;
-      document.getElementById("cur-lounge-members").textContent = `Members in voice/listen sync: ${(l.members || []).map(m => "@" + m).join(", ")}`;
+      document.getElementById("cur-lounge-members").textContent = `Members in lounge: ${(l.members || []).map(m => "@" + m).join(", ")}`;
       document.getElementById("lounge-eq").classList.toggle("paused", !l.is_playing);
 
       connectRoomSocket(`lounge:${l.id}`);
@@ -1464,10 +1680,15 @@
       lBox.innerHTML = "";
       hist.messages.forEach(m => appendChatMessage("lounge-chat-box", m));
 
+      if (hist.voice_peers) {
+        Object.assign(voiceMembers, hist.voice_peers);
+        updateVoiceUI();
+      }
+
       const media = await api(`/api/media/lounge?lounge_id=${l.id}`);
       pendingLoungeState = media;
       applyMediaToPlayer(loungePlayer, media);
-      showToast(`🎧 Joined ${l.name} — Audio/Video Synchronized!`);
+      showToast(`🎧 Joined ${l.name} — Click 'Join Voice (Mic)' to talk!`);
       loadLounges();
     }
 
@@ -1487,7 +1708,7 @@
       document.getElementById("lounge-yt-input").value = "";
       const res = await api("/api/media/sync", {
         method: "POST",
-        body: JSON.stringify({ lounge_id: activeLoungeId, action: "sync", video_url_or_id: val, position: 0 })
+        body: JSON.stringify({ lounge_id: activeLoungeId, action: "play", video_url_or_id: val, position: 0 })
       });
       applyMediaToPlayer(loungePlayer, res);
     }
@@ -1509,14 +1730,26 @@
     }
 
     // -------------------------------------------------------------------------
-    // Entertainment / Synchronized YouTube Cinema
+    // Entertainment / Synchronized YouTube Cinema + Chat
     // -------------------------------------------------------------------------
     async function loadCinemaState() {
+      connectRoomSocket("entertainment");
       const state = await api("/api/media/entertainment");
       pendingCinemaState = state;
       document.getElementById("cinema-now-playing").textContent = `Now Playing: ${state.title} (Synced by @${state.updated_by || "System"})`;
       applyMediaToPlayer(cinemaPlayer, state);
       renderCinemaQueue(state.queue || []);
+
+      const hist = await api("/api/chat/entertainment").catch(() => ({ messages: [] }));
+      const box = document.getElementById("cinema-chat-box");
+      if (box) {
+        box.innerHTML = "";
+        hist.messages.forEach(m => appendChatMessage("cinema-chat-box", m));
+      }
+      if (hist.voice_peers) {
+        Object.assign(voiceMembers, hist.voice_peers);
+        updateVoiceUI();
+      }
     }
 
     function renderCinemaQueue(q) {
@@ -1586,6 +1819,15 @@
         body: JSON.stringify({ channel_key: "entertainment", action: "play", video_url_or_id: videoId, title, position: 0 })
       });
       applyMediaToPlayer(cinemaPlayer, state);
+    }
+
+    async function sendCinemaChat() {
+      const inp = document.getElementById("cinema-chat-input");
+      if (!inp || !inp.value.trim()) return;
+      const content = inp.value.trim();
+      inp.value = "";
+      connectRoomSocket("entertainment");
+      await api("/api/chat/send", { method: "POST", body: JSON.stringify({ room: "entertainment", content }) });
     }
 
     // -------------------------------------------------------------------------
@@ -1788,7 +2030,7 @@
       } else if (game === "typing") {
         const phrases = [
           "synchronizing across the aether realm",
-          "bots and lounges unite in real time",
+          "bots and voice lounges unite in real time",
           "sakura petals drift over neon code"
         ];
         const target = phrases[Math.floor(Math.random() * phrases.length)];

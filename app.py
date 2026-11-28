@@ -438,6 +438,45 @@ def init_db():
                     updated_at DOUBLE PRECISION DEFAULT 0.0,
                     updated_by VARCHAR(64) DEFAULT 'System'
                 );
+                            cur.execute("""
+                CREATE TABLE IF NOT EXISTS lounges (
+                    id SERIAL PRIMARY KEY,
+                    name VARCHAR(80) NOT NULL,
+                    topic VARCHAR(160) DEFAULT 'Chill & Listen Together',
+                    theme VARCHAR(32) DEFAULT 'sakura',
+                    creator VARCHAR(64) NOT NULL,
+                    members JSONB DEFAULT '[]'::jsonb,
+                    video_id VARCHAR(32) DEFAULT 'jfKfPfyJRdk',
+                    video_title VARCHAR(160) DEFAULT 'Lofi Hip Hop Radio - Beats to Relax/Study to',
+                    queue JSONB DEFAULT '[]'::jsonb,
+                    is_playing BOOLEAN DEFAULT TRUE,
+                    base_position DOUBLE PRECISION DEFAULT 0.0,
+                    updated_at DOUBLE PRECISION DEFAULT 0.0,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                );
+            """)
+
+            lounge_migrations = [
+                "ALTER TABLE lounges ADD COLUMN IF NOT EXISTS topic VARCHAR(160) DEFAULT 'Chill & Listen Together'",
+                "ALTER TABLE lounges ADD COLUMN IF NOT EXISTS theme VARCHAR(32) DEFAULT 'sakura'",
+                "ALTER TABLE lounges ADD COLUMN IF NOT EXISTS creator VARCHAR(64) DEFAULT 'System'",
+                "ALTER TABLE lounges ADD COLUMN IF NOT EXISTS members JSONB DEFAULT '[]'::jsonb",
+                "ALTER TABLE lounges ADD COLUMN IF NOT EXISTS video_id VARCHAR(32) DEFAULT 'jfKfPfyJRdk'",
+                "ALTER TABLE lounges ADD COLUMN IF NOT EXISTS video_title VARCHAR(160) DEFAULT 'Lofi Hip Hop Radio - Beats to Relax/Study to'",
+                "ALTER TABLE lounges ADD COLUMN IF NOT EXISTS queue JSONB DEFAULT '[]'::jsonb",
+                "ALTER TABLE lounges ADD COLUMN IF NOT EXISTS is_playing BOOLEAN DEFAULT TRUE",
+                "ALTER TABLE lounges ADD COLUMN IF NOT EXISTS base_position DOUBLE PRECISION DEFAULT 0.0",
+                "ALTER TABLE lounges ADD COLUMN IF NOT EXISTS updated_at DOUBLE PRECISION DEFAULT 0.0",
+                "ALTER TABLE confessions ADD COLUMN IF NOT EXISTS is_anonymous BOOLEAN DEFAULT TRUE",
+                "ALTER TABLE confessions ADD COLUMN IF NOT EXISTS likes INTEGER DEFAULT 0",
+                "ALTER TABLE guild_boss ADD COLUMN IF NOT EXISTS tier INTEGER DEFAULT 1",
+                "ALTER TABLE guild_boss ADD COLUMN IF NOT EXISTS last_attacker VARCHAR(64) DEFAULT 'None'",
+                "ALTER TABLE polls ADD COLUMN IF NOT EXISTS votes JSONB DEFAULT '{}'::jsonb",
+                "ALTER TABLE polls ADD COLUMN IF NOT EXISTS created_by VARCHAR(64) DEFAULT 'Simple Poll Bot'",
+            ]
+            for stmt in lounge_migrations:
+                cur.execute(stmt)
+
             """)
 
             cur.execute("""

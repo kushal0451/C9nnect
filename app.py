@@ -18,7 +18,6 @@ from fastapi import (
     FastAPI,
     Header,
     HTTPException,
-    Path,
     Query,
     WebSocket,
     WebSocketDisconnect,
@@ -51,7 +50,7 @@ MAX_LOUNGE_MEMBERS = 12
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
-app = FastAPI(title="Synchronized Social & Gaming Hub", version="2.0.0")
+app = FastAPI(title="AetherRealm Synchronized Social, Voice & Gaming Hub", version="3.0.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -90,16 +89,14 @@ def release_db_connection(conn):
 
 
 # ---------------------------------------------------------------------------
-# WebSocket Connection & Presence Manager
+# WebSocket Connection, Presence & WebRTC Voice Signaling Manager
 # ---------------------------------------------------------------------------
 class RoomManager:
     def __init__(self):
-        # room_name -> list of {"ws": WebSocket, "user": dict}
         self.rooms: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
-        # username -> set of rooms
         self.user_rooms: Dict[str, set] = defaultdict(set)
-        # username -> last seen timestamp
         self.online_users: Dict[str, float] = {}
+        self.voice_participants: Dict[str, Dict[str, Dict[str, Any]]] = defaultdict(dict)
         self.lock = asyncio.Lock()
 
     async def connect(self, room: str, ws: WebSocket, user: Dict[str, Any]):
@@ -130,15 +127,28 @@ class RoomManager:
                     )
                     if not still_in_room:
                         self.user_rooms[uname].discard(room)
+                        self.voice_participants[room].pop(uname, None)
 
         if left_user:
+            uname = left_user.get("username")
             await self.broadcast(
                 room,
                 {
                     "type": "presence_leave",
                     "room": room,
-                    "user": left_user.get("username"),
+                    "user": uname,
                     "timestamp": now_utc().isoformat(),
+                },
+            )
+            await self.broadcast(
+                room,
+                {
+                    "type": "voice_state",
+                    "room": room,
+                    "user": uname,
+                    "in_voice": False,
+                    "muted": True,
+                    "speaking": False,
                 },
             )
             await self.broadcast_presence()
@@ -182,7 +192,7 @@ manager = RoomManager()
 
 
 # ---------------------------------------------------------------------------
-# Auth & Helper Functions
+# Auth & Utility Functions
 # ---------------------------------------------------------------------------
 def hash_password(password: str) -> str:
     return pwd_context.hash(password)
@@ -338,22 +348,6 @@ def init_db():
                 );
             """)
 
-            # Safe column migrations for existing databases
-            alter_statements = [
-                "ALTER TABLE users ADD COLUMN IF NOT EXISTS role_title VARCHAR(64) DEFAULT 'Voyager'",
-                "ALTER TABLE users ADD COLUMN IF NOT EXISTS birthday VARCHAR(16)",
-                "ALTER TABLE users ADD COLUMN IF NOT EXISTS captcha_verified BOOLEAN DEFAULT TRUE",
-                "ALTER TABLE users ADD COLUMN IF NOT EXISTS warnings INTEGER DEFAULT 0",
-                "ALTER TABLE users ADD COLUMN IF NOT EXISTS cowoncy INTEGER DEFAULT 250",
-                "ALTER TABLE users ADD COLUMN IF NOT EXISTS last_daily_claim VARCHAR(16) DEFAULT ''",
-                "ALTER TABLE users ADD COLUMN IF NOT EXISTS invites_count INTEGER DEFAULT 0",
-                "ALTER TABLE users ADD COLUMN IF NOT EXISTS messages_count INTEGER DEFAULT 0",
-                "ALTER TABLE users ADD COLUMN IF NOT EXISTS inventory JSONB DEFAULT '[\"✨\"]'::jsonb",
-                "ALTER TABLE users ADD COLUMN IF NOT EXISTS notes TEXT DEFAULT ''",
-            ]
-            for stmt in alter_statements:
-                cur.execute(stmt)
-
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS friends (
                     id SERIAL PRIMARY KEY,
@@ -438,45 +432,6 @@ def init_db():
                     updated_at DOUBLE PRECISION DEFAULT 0.0,
                     updated_by VARCHAR(64) DEFAULT 'System'
                 );
-                            cur.execute("""
-                CREATE TABLE IF NOT EXISTS lounges (
-                    id SERIAL PRIMARY KEY,
-                    name VARCHAR(80) NOT NULL,
-                    topic VARCHAR(160) DEFAULT 'Chill & Listen Together',
-                    theme VARCHAR(32) DEFAULT 'sakura',
-                    creator VARCHAR(64) NOT NULL,
-                    members JSONB DEFAULT '[]'::jsonb,
-                    video_id VARCHAR(32) DEFAULT 'jfKfPfyJRdk',
-                    video_title VARCHAR(160) DEFAULT 'Lofi Hip Hop Radio - Beats to Relax/Study to',
-                    queue JSONB DEFAULT '[]'::jsonb,
-                    is_playing BOOLEAN DEFAULT TRUE,
-                    base_position DOUBLE PRECISION DEFAULT 0.0,
-                    updated_at DOUBLE PRECISION DEFAULT 0.0,
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                );
-            """)
-
-            lounge_migrations = [
-                "ALTER TABLE lounges ADD COLUMN IF NOT EXISTS topic VARCHAR(160) DEFAULT 'Chill & Listen Together'",
-                "ALTER TABLE lounges ADD COLUMN IF NOT EXISTS theme VARCHAR(32) DEFAULT 'sakura'",
-                "ALTER TABLE lounges ADD COLUMN IF NOT EXISTS creator VARCHAR(64) DEFAULT 'System'",
-                "ALTER TABLE lounges ADD COLUMN IF NOT EXISTS members JSONB DEFAULT '[]'::jsonb",
-                "ALTER TABLE lounges ADD COLUMN IF NOT EXISTS video_id VARCHAR(32) DEFAULT 'jfKfPfyJRdk'",
-                "ALTER TABLE lounges ADD COLUMN IF NOT EXISTS video_title VARCHAR(160) DEFAULT 'Lofi Hip Hop Radio - Beats to Relax/Study to'",
-                "ALTER TABLE lounges ADD COLUMN IF NOT EXISTS queue JSONB DEFAULT '[]'::jsonb",
-                "ALTER TABLE lounges ADD COLUMN IF NOT EXISTS is_playing BOOLEAN DEFAULT TRUE",
-                "ALTER TABLE lounges ADD COLUMN IF NOT EXISTS base_position DOUBLE PRECISION DEFAULT 0.0",
-                "ALTER TABLE lounges ADD COLUMN IF NOT EXISTS updated_at DOUBLE PRECISION DEFAULT 0.0",
-                "ALTER TABLE confessions ADD COLUMN IF NOT EXISTS is_anonymous BOOLEAN DEFAULT TRUE",
-                "ALTER TABLE confessions ADD COLUMN IF NOT EXISTS likes INTEGER DEFAULT 0",
-                "ALTER TABLE guild_boss ADD COLUMN IF NOT EXISTS tier INTEGER DEFAULT 1",
-                "ALTER TABLE guild_boss ADD COLUMN IF NOT EXISTS last_attacker VARCHAR(64) DEFAULT 'None'",
-                "ALTER TABLE polls ADD COLUMN IF NOT EXISTS votes JSONB DEFAULT '{}'::jsonb",
-                "ALTER TABLE polls ADD COLUMN IF NOT EXISTS created_by VARCHAR(64) DEFAULT 'Simple Poll Bot'",
-            ]
-            for stmt in lounge_migrations:
-                cur.execute(stmt)
-
             """)
 
             cur.execute("""
@@ -561,7 +516,37 @@ def init_db():
                 );
             """)
 
-            # Seed defaults if empty
+            migrations = [
+                "ALTER TABLE users ADD COLUMN IF NOT EXISTS role_title VARCHAR(64) DEFAULT 'Voyager'",
+                "ALTER TABLE users ADD COLUMN IF NOT EXISTS birthday VARCHAR(16)",
+                "ALTER TABLE users ADD COLUMN IF NOT EXISTS captcha_verified BOOLEAN DEFAULT TRUE",
+                "ALTER TABLE users ADD COLUMN IF NOT EXISTS warnings INTEGER DEFAULT 0",
+                "ALTER TABLE users ADD COLUMN IF NOT EXISTS cowoncy INTEGER DEFAULT 250",
+                "ALTER TABLE users ADD COLUMN IF NOT EXISTS last_daily_claim VARCHAR(16) DEFAULT ''",
+                "ALTER TABLE users ADD COLUMN IF NOT EXISTS invites_count INTEGER DEFAULT 0",
+                "ALTER TABLE users ADD COLUMN IF NOT EXISTS messages_count INTEGER DEFAULT 0",
+                "ALTER TABLE users ADD COLUMN IF NOT EXISTS inventory JSONB DEFAULT '[\"✨\"]'::jsonb",
+                "ALTER TABLE users ADD COLUMN IF NOT EXISTS notes TEXT DEFAULT ''",
+                "ALTER TABLE lounges ADD COLUMN IF NOT EXISTS topic VARCHAR(160) DEFAULT 'Chill & Listen Together'",
+                "ALTER TABLE lounges ADD COLUMN IF NOT EXISTS theme VARCHAR(32) DEFAULT 'sakura'",
+                "ALTER TABLE lounges ADD COLUMN IF NOT EXISTS creator VARCHAR(64) DEFAULT 'System'",
+                "ALTER TABLE lounges ADD COLUMN IF NOT EXISTS members JSONB DEFAULT '[]'::jsonb",
+                "ALTER TABLE lounges ADD COLUMN IF NOT EXISTS video_id VARCHAR(32) DEFAULT 'jfKfPfyJRdk'",
+                "ALTER TABLE lounges ADD COLUMN IF NOT EXISTS video_title VARCHAR(160) DEFAULT 'Lofi Hip Hop Radio - Beats to Relax/Study to'",
+                "ALTER TABLE lounges ADD COLUMN IF NOT EXISTS queue JSONB DEFAULT '[]'::jsonb",
+                "ALTER TABLE lounges ADD COLUMN IF NOT EXISTS is_playing BOOLEAN DEFAULT TRUE",
+                "ALTER TABLE lounges ADD COLUMN IF NOT EXISTS base_position DOUBLE PRECISION DEFAULT 0.0",
+                "ALTER TABLE lounges ADD COLUMN IF NOT EXISTS updated_at DOUBLE PRECISION DEFAULT 0.0",
+                "ALTER TABLE confessions ADD COLUMN IF NOT EXISTS is_anonymous BOOLEAN DEFAULT TRUE",
+                "ALTER TABLE confessions ADD COLUMN IF NOT EXISTS likes INTEGER DEFAULT 0",
+                "ALTER TABLE guild_boss ADD COLUMN IF NOT EXISTS tier INTEGER DEFAULT 1",
+                "ALTER TABLE guild_boss ADD COLUMN IF NOT EXISTS last_attacker VARCHAR(64) DEFAULT 'None'",
+                "ALTER TABLE polls ADD COLUMN IF NOT EXISTS votes JSONB DEFAULT '{}'::jsonb",
+                "ALTER TABLE polls ADD COLUMN IF NOT EXISTS created_by VARCHAR(64) DEFAULT 'Simple Poll Bot'",
+            ]
+            for stmt in migrations:
+                cur.execute(stmt)
+
             cur.execute("SELECT id FROM guild_boss WHERE id = 1")
             if not cur.fetchone():
                 cur.execute(
@@ -613,25 +598,47 @@ def on_startup():
 
 
 # ---------------------------------------------------------------------------
-# Bot Engine (AetherBot, MEE6, ProBot, OwO, Counting, Giveaway, Ticket, etc.)
+# Smart Context-Aware Bot Engine (Gemini + YouTube + Discord Bot Suite)
 # ---------------------------------------------------------------------------
-async def ask_gemini_or_fallback(prompt: str, username: str) -> str:
-    if GEMINI_API_KEY:
+def get_recent_room_context(conn, room: str, limit: int = 8) -> str:
+    try:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute(
+                "SELECT sender, bot_name, is_bot, content FROM chat_messages WHERE room = %s ORDER BY id DESC LIMIT %s",
+                (room, limit),
+            )
+            rows = cur.fetchall()
+            rows.reverse()
+            lines = []
+            for r in rows:
+                who = r["bot_name"] if r["is_bot"] else r["sender"]
+                lines.append(f"{who}: {r['content']}")
+            return "\n".join(lines)
+    except Exception:
+        return ""
+
+
+async def call_smart_gemini(
+    system_persona: str,
+    user_prompt: str,
+    room_history: str = "",
+    fallback: str = "✨ I'm online and ready! Try `/help` to explore commands.",
+) -> str:
+    if not GEMINI_API_KEY:
+        return fallback
+
+    full_prompt = system_persona
+    if room_history:
+        full_prompt += f"\n\nRecent room conversation for context:\n{room_history}"
+    full_prompt += f"\n\nCurrent request:\n{user_prompt}"
+
+    models_to_try = ["gemini-2.5-flash", "gemini-2.0-flash"]
+    for model_name in models_to_try:
         try:
-            url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={GEMINI_API_KEY}"
+            url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={GEMINI_API_KEY}"
             payload = {
-                "contents": [
-                    {
-                        "parts": [
-                            {
-                                "text": (
-                                    f"You are AetherBot, a helpful, witty social & gaming hub assistant talking to {username}. "
-                                    f"Keep replies concise (under 120 words) and fun.\n\nUser prompt: {prompt}"
-                                )
-                            }
-                        ]
-                    }
-                ]
+                "contents": [{"parts": [{"text": full_prompt}]}],
+                "generationConfig": {"temperature": 0.85, "maxOutputTokens": 260},
             }
             async with httpx.AsyncClient(timeout=12.0) as client:
                 resp = await client.post(url, json=payload)
@@ -645,36 +652,54 @@ async def ask_gemini_or_fallback(prompt: str, username: str) -> str:
                     if parts and parts[0].get("text"):
                         return parts[0]["text"].strip()
         except Exception:
-            pass
+            continue
+    return fallback
 
-    fallback_replies = [
-        f"✨ AetherBot hears you, **{username}**! Try `/help` to see MEE6 ranks, OwO hunts, giveaways, tickets, polls, and synchronized music lounges.",
-        f"🔮 The Aether whispers to **{username}**: synchronize your lounge, claim `/daily` cowoncy, or challenge the Guild Boss!",
-        f"⚡ AetherBot online! Ask me anything or test `owo hunt`, `/rank`, `/poll`, `/gstart`, or `/ticket`.",
-    ]
-    return random.choice(fallback_replies)
+
+async def search_youtube_first(query: str) -> Optional[Dict[str, str]]:
+    direct = extract_youtube_id(query)
+    if direct:
+        return {"video_id": direct, "title": f"YouTube Track ({direct})"}
+    if YOUTUBE_API_KEY:
+        try:
+            async with httpx.AsyncClient(timeout=8.0) as client:
+                resp = await client.get(
+                    "https://www.googleapis.com/youtube/v3/search",
+                    params={
+                        "part": "snippet",
+                        "q": query,
+                        "type": "video",
+                        "maxResults": 1,
+                        "key": YOUTUBE_API_KEY,
+                    },
+                )
+                if resp.status_code == 200:
+                    items = resp.json().get("items", [])
+                    if items:
+                        vid = items[0].get("id", {}).get("videoId")
+                        title = items[0].get("snippet", {}).get("title", query)
+                        if vid:
+                            return {"video_id": vid, "title": title}
+        except Exception:
+            pass
+    return None
 
 
 def build_help_text() -> str:
     return (
-        "**🤖 Bot Command Suite (MEE6 • ProBot • OwO • AetherBot • Mod & Utility)**\n"
-        "• **AetherBot:** `/ask <question>` or `/oracle <question>`\n"
-        "• **MEE6 & ProBot:** `/rank [user]`, `/level`, `/leaderboard`, `/stats`\n"
-        "• **OwO Bot:** `owo hunt`, `owo battle`, `owo daily`, `owo cash`, `owo slots <amount>`\n"
-        "• **GiveawayBot:** `/gstart <seconds> <prize>` or `/gend <id>`\n"
-        "• **Ticket Tool:** `/ticket <reason>` or `/close <id>`\n"
-        "• **Reaction Roles & Captcha:** `/roles <Voyager|Strategist|Bard|Guardian>`, `/captcha`\n"
-        "• **Dyno / Carl-bot / Wick:** `/warn <user> <reason>`, `/tag set <name> <reply>`, `/tag <name>`\n"
-        "• **Simple Poll & Birthday:** `/poll <Question | Opt1 | Opt2 | Opt3>`, `/birthday <MM-DD>`\n"
-        "• **Fun & Music:** `/roll [max]`, `/rps <rock|paper|scissors>`, `/meme`, `/play <youtube_url_or_id>`"
+        "**🤖 Smart Bot Suite (AetherBot • MEE6 • ProBot • OwO • Carl-bot • Giveaway • Ticket)**\n"
+        "• **AetherBot (AI):** `/ask <anything>`, `/oracle <fortune>`, or mention `@aetherbot` in chat\n"
+        "• **MEE6 & ProBot:** `/rank [user]`, `/roast [user]`, `/compliment [user]`, `/leaderboard`, `/stats`\n"
+        "• **OwO Bot:** `owo hunt`, `owo battle`, `owo daily`, `owo cash`, `owo slots <bet>`\n"
+        "• **YouTube Sync DJ:** `/play <song name or YouTube URL>` (searches YouTube & syncs for everyone!)\n"
+        "• **GiveawayBot:** `/gstart <seconds> <prize>` or `/gend [id]`\n"
+        "• **Ticket Tool & Mod:** `/ticket <reason>`, `/close [id]`, `/warn <user> <reason>`, `/captcha`\n"
+        "• **Reaction Roles & Polls:** `/roles <Voyager|Strategist|Bard|Guardian|Streamer>`, `/poll Q | Opt1 | Opt2`, `/birthday MM-DD`\n"
+        "• **Carl-bot & Dyno:** `/roll [max]`, `/rps <rock|paper|scissors>`, `/meme`, `/tag set <name> <text>`"
     )
 
 
 async def process_bot_command(conn, room: str, username: str, raw_text: str) -> Optional[List[Dict[str, Any]]]:
-    """
-    Returns a list of bot message payloads to broadcast if raw_text is a bot command
-    or a special room trigger (like counting). Returns None for normal chat messages.
-    """
     text = raw_text.strip()
     lower = text.lower()
     bot_replies: List[Dict[str, Any]] = []
@@ -693,7 +718,20 @@ async def process_bot_command(conn, room: str, username: str, raw_text: str) -> 
             row = dict(cur.fetchone())
         bot_replies.append(row)
 
-    # Counting Bot auto-check in counting rooms
+    # 1. Natural @AetherBot mention anywhere in chat
+    if "@aetherbot" in lower and not lower.startswith("/"):
+        clean_q = re.sub(r"@aetherbot", "", text, flags=re.IGNORECASE).strip() or "Hey AetherBot, what's up?"
+        history = get_recent_room_context(conn, room, limit=8)
+        reply = await call_smart_gemini(
+            f"You are AetherBot, the witty, intelligent AI host of AetherRealm talking to @{username} in #{room}. Be natural, sharp, and helpful (under 110 words).",
+            clean_q,
+            room_history=history,
+            fallback=f"✨ Hey **@{username}**! Ask me anything or try `/play <song>` to sync music.",
+        )
+        add_bot("AetherBot", reply)
+        return bot_replies
+
+    # 2. Counting Bot auto-check in counting rooms
     if "count" in room.lower() and not text.startswith("/") and not lower.startswith("owo "):
         stripped_num = text.strip()
         if stripped_num.isdigit():
@@ -715,21 +753,19 @@ async def process_bot_command(conn, room: str, username: str, raw_text: str) -> 
                         if st["last_user"] == username
                         else f"expected **{expected}**, got **{val}**!"
                     )
-                    cur.execute(
-                        "UPDATE counting_state SET current_count = 0, last_user = '' WHERE id = 1"
-                    )
+                    cur.execute("UPDATE counting_state SET current_count = 0, last_user = '' WHERE id = 1")
                     add_bot(
                         "Counting Bot",
                         f"💥 Streak broken by **@{username}** ({reason}) Reset back to **0**! Best record: **{st['high_score']}**.",
                     )
             return bot_replies
 
-    # OwO Bot commands
+    # 3. OwO Bot commands
     if lower.startswith("owo ") or lower == "owo":
         parts = text.split()
         sub = parts[1].lower() if len(parts) > 1 else "help"
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
-            cur.execute("SELECT cowoncy, last_daily_claim, xp, level FROM users WHERE username = %s", (username,))
+            cur.execute("SELECT cowoncy, last_daily_claim FROM users WHERE username = %s", (username,))
             u = cur.fetchone()
             if not u:
                 return None
@@ -751,18 +787,18 @@ async def process_bot_command(conn, room: str, username: str, raw_text: str) -> 
                 cur.execute("SELECT cowoncy FROM users WHERE username = %s", (target,))
                 t_row = cur.fetchone()
                 c_val = t_row["cowoncy"] if t_row else coins
-                add_bot("OwO Bot", f"💳 **@{target}** currently holds **{c_val} Cowoncy**.")
+                add_bot("OwO Bot", f"💳 **@{target}** holds **{c_val} Cowoncy**.")
             elif sub == "hunt":
                 cost = 25
                 if coins < cost:
                     add_bot("OwO Bot", f"❌ Need at least **{cost} Cowoncy** to hunt! Try `owo daily`.")
                 else:
                     creatures = [
-                        ("🦊 Kitsune", 65),
-                        ("🐉 Mini Drake", 95),
-                        ("🦉 Moon Owl", 50),
-                        ("🦄 Starlight Unicorn", 140),
-                        ("🐾 Stray Cat", 35),
+                        ("🦊 Celestial Kitsune", 75),
+                        ("🐉 Void Drake", 110),
+                        ("🦉 Astral Owl", 55),
+                        ("🦄 Starlight Unicorn", 150),
+                        ("🐾 Shadow Cat", 40),
                     ]
                     caught, reward = random.choice(creatures)
                     new_c = coins - cost + reward
@@ -772,19 +808,19 @@ async def process_bot_command(conn, room: str, username: str, raw_text: str) -> 
                         f"🏹 **@{username}** spent 25 and caught {caught} (**+{reward} Cowoncy**)! Balance: **{new_c}**.",
                     )
             elif sub == "battle":
-                win = random.random() >= 0.45
-                delta = random.randint(40, 110) if win else -min(coins, 35)
+                win = random.random() >= 0.44
+                delta = random.randint(45, 120) if win else -min(coins, 35)
                 new_c = max(0, coins + delta)
                 cur.execute("UPDATE users SET cowoncy = %s WHERE username = %s", (new_c, username))
                 if win:
-                    add_bot("OwO Bot", f"⚔️ **@{username}** won the OwO duel and earned **+{delta} Cowoncy**! Balance: **{new_c}**.")
+                    add_bot("OwO Bot", f"⚔️ **@{username}** won the OwO duel (**+{delta} Cowoncy**)! Balance: **{new_c}**.")
                 else:
                     add_bot("OwO Bot", f"💀 **@{username}** lost the duel (**{delta} Cowoncy**). Balance: **{new_c}**.")
             elif sub in ("slots", "s"):
                 bet = int(parts[2]) if len(parts) > 2 and parts[2].isdigit() else 50
                 bet = max(10, min(bet, coins))
                 if coins < 10:
-                    add_bot("OwO Bot", f"❌ Not enough Cowoncy to spin slots! Try `owo daily`.")
+                    add_bot("OwO Bot", "❌ Not enough Cowoncy to spin slots! Try `owo daily`.")
                 else:
                     syms = ["🍒", "🍋", "💎", "7️⃣", "🌸"]
                     reels = [random.choice(syms) for _ in range(3)]
@@ -802,10 +838,10 @@ async def process_bot_command(conn, room: str, username: str, raw_text: str) -> 
                     cur.execute("UPDATE users SET cowoncy = %s WHERE username = %s", (new_c, username))
                     add_bot("OwO Bot", msg)
             else:
-                add_bot("OwO Bot", "🐾 Try `owo daily`, `owo hunt`, `owo battle`, `owo cash`, or `owo slots <bet>`.")
+                add_bot("OwO Bot", "🐾 Commands: `owo daily`, `owo hunt`, `owo battle`, `owo cash`, `owo slots <bet>`.")
         return bot_replies
 
-    # Slash commands
+    # 4. Slash Commands
     if not text.startswith("/"):
         return None
 
@@ -816,10 +852,26 @@ async def process_bot_command(conn, room: str, username: str, raw_text: str) -> 
         add_bot("AetherBot", build_help_text())
 
     elif cmd in ("/ask", "/oracle"):
-        question = text[len(parts[0]):].strip() or "Give me a quick tip for today."
-        bot_label = "AetherBot" if cmd == "/ask" else "Oracle Bot"
-        reply = await ask_gemini_or_fallback(question, username)
+        question = text[len(parts[0]):].strip() or "Give me a clever insight for today."
+        history = get_recent_room_context(conn, room, limit=8)
+        if cmd == "/oracle":
+            persona = f"You are the Mystical Oracle Bot of AetherRealm giving a dramatic, poetic yet witty prophecy/answer to @{username}. Under 100 words."
+            bot_label = "Oracle Bot"
+        else:
+            persona = f"You are AetherBot, a smart, conversational AI assistant in AetherRealm talking to @{username}. Be insightful, direct, and engaging. Under 120 words."
+            bot_label = "AetherBot"
+        reply = await call_smart_gemini(persona, question, room_history=history)
         add_bot(bot_label, f"**@{username}:** {reply}")
+
+    elif cmd in ("/roast", "/compliment"):
+        target = parts[1].lstrip("@") if len(parts) > 1 else username
+        mode_desc = "a playful, clever comedy roast (PG-13, friendly banter)" if cmd == "/roast" else "an epic, hype-filled gamer/anime compliment"
+        reply = await call_smart_gemini(
+            f"You are MEE6 Bot giving {mode_desc} to @{target} requested by @{username}. Keep it punchy (1-2 sentences).",
+            f"{cmd} @{target}",
+            fallback=f"🔥 **@{target}** is too legendary for standard metrics!",
+        )
+        add_bot("MEE6", reply)
 
     elif cmd in ("/rank", "/level"):
         target = parts[1].lstrip("@") if len(parts) > 1 else username
@@ -845,7 +897,7 @@ async def process_bot_command(conn, room: str, username: str, raw_text: str) -> 
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
             cur.execute("SELECT username, xp, honor, cowoncy FROM users ORDER BY xp DESC LIMIT 5")
             rows = cur.fetchall()
-        lines = ["🏆 **Top Members (ProBot & MEE6)**"]
+        lines = ["🏆 **Top Citizens (ProBot & MEE6)**"]
         for idx, r in enumerate(rows, start=1):
             lines.append(
                 f"{idx}. **@{r['username']}** — {r['xp']} XP • {r['honor']} Honor • {r['cowoncy']} Cowoncy"
@@ -854,7 +906,6 @@ async def process_bot_command(conn, room: str, username: str, raw_text: str) -> 
 
     elif cmd == "/stats":
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
-            total_users = cur.execute("SELECT COUNT(*) FROM users") or None
             cur.execute("SELECT COUNT(*) AS c FROM users")
             u_cnt = cur.fetchone()["c"]
             cur.execute("SELECT COUNT(*) AS c FROM chat_messages")
@@ -863,7 +914,7 @@ async def process_bot_command(conn, room: str, username: str, raw_text: str) -> 
             l_cnt = cur.fetchone()["c"]
         add_bot(
             "Statbot",
-            f"📈 **Server Pulse:** **{u_cnt}** members • **{m_cnt}** total messages • **{l_cnt}** lounges • **{len(manager.online_users)}** tracked online.",
+            f"📈 **Live Telemetry:** **{u_cnt}** citizens • **{m_cnt}** messages • **{l_cnt}** lounges • **{len(manager.online_users)}** online.",
         )
 
     elif cmd == "/roll":
@@ -888,12 +939,7 @@ async def process_bot_command(conn, room: str, username: str, raw_text: str) -> 
         add_bot("Carl-bot", f"✊ **@{username}** chose **{pick}** vs Carl-bot's **{bot_pick}** — {outcome}")
 
     elif cmd == "/meme":
-        memes = [
-            "😂 *When your WebSocket finally syncs on the first try after 47 refreshes.*",
-            "🤣 *Me: 'I'll just add one small bot.' Also me: 14 Discord bots at 3 AM.*",
-            "😹 *Synchronized music room: everyone vibes to the exact same beat!*",
-        ]
-        meme_text = random.choice(memes)
+        meme_text = "😂 *When your WebSocket syncs audio, voice, and YouTube on the first try!*"
         meme_img = None
         try:
             async with httpx.AsyncClient(timeout=5.0) as client:
@@ -908,34 +954,65 @@ async def process_bot_command(conn, room: str, username: str, raw_text: str) -> 
 
     elif cmd == "/play":
         query_str = text[len(parts[0]):].strip()
-        vid = extract_youtube_id(query_str)
-        if vid:
-            ts = now_ts()
-            with conn.cursor() as cur:
-                cur.execute(
-                    """
-                    UPDATE media_state
-                    SET video_id = %s, title = %s, is_playing = TRUE, base_position = 0.0, updated_at = %s, updated_by = %s
-                    WHERE channel_key = 'entertainment'
-                    """,
-                    (vid, f"YouTube Track ({vid})", ts, username),
-                )
-            await manager.broadcast(
-                "global",
-                {
-                    "type": "media_sync",
-                    "channel_key": "entertainment",
-                    "video_id": vid,
-                    "title": f"YouTube Track ({vid})",
-                    "is_playing": True,
-                    "base_position": 0.0,
-                    "updated_at": ts,
-                    "updated_by": username,
-                },
-            )
-            add_bot("AetherBot", f"🎵 **@{username}** started synchronized playback: `{vid}`!")
+        if not query_str:
+            add_bot("AetherBot", "🎧 Usage: `/play <song name or YouTube URL>` to search & sync for everyone!")
         else:
-            add_bot("AetherBot", "🎧 Usage: `/play <YouTube URL or 11-char Video ID>` to sync playback for everyone.")
+            found = await search_youtube_first(query_str)
+            if found:
+                vid = found["video_id"]
+                title = found["title"]
+                ts = now_ts()
+                if room.startswith("lounge:"):
+                    lid = int(room.split(":", 1)[1])
+                    with conn.cursor() as cur:
+                        cur.execute(
+                            """
+                            UPDATE lounges
+                            SET video_id = %s, video_title = %s, is_playing = TRUE, base_position = 0.0, updated_at = %s
+                            WHERE id = %s
+                            """,
+                            (vid, title, ts, lid),
+                        )
+                    payload = {
+                        "type": "media_sync",
+                        "channel_key": room,
+                        "lounge_id": lid,
+                        "video_id": vid,
+                        "title": title,
+                        "is_playing": True,
+                        "base_position": 0.0,
+                        "updated_at": ts,
+                        "updated_by": username,
+                    }
+                    await manager.broadcast(room, payload)
+                    await manager.broadcast("global", payload)
+                    add_bot("AetherBot", f"🎵 Synced **{title}** in this Lounge for everyone!")
+                else:
+                    with conn.cursor() as cur:
+                        cur.execute(
+                            """
+                            UPDATE media_state
+                            SET video_id = %s, title = %s, is_playing = TRUE, base_position = 0.0, updated_at = %s, updated_by = %s
+                            WHERE channel_key = 'entertainment'
+                            """,
+                            (vid, title, ts, username),
+                        )
+                    await manager.broadcast(
+                        "global",
+                        {
+                            "type": "media_sync",
+                            "channel_key": "entertainment",
+                            "video_id": vid,
+                            "title": title,
+                            "is_playing": True,
+                            "base_position": 0.0,
+                            "updated_at": ts,
+                            "updated_by": username,
+                        },
+                    )
+                    add_bot("AetherBot", f"🎬 Synced **{title}** in **Sync Cinema & YT** for everyone!")
+            else:
+                add_bot("AetherBot", "❌ Could not find a matching YouTube video. Try pasting a YouTube URL.")
 
     elif cmd == "/gstart":
         sec = int(parts[1]) if len(parts) > 1 and parts[1].isdigit() else 120
@@ -1086,7 +1163,15 @@ async def process_bot_command(conn, room: str, username: str, raw_text: str) -> 
             add_bot("Birthday Bot", "🎂 Usage: `/birthday MM-DD` (example: `/birthday 07-14`).")
 
     else:
-        add_bot("AetherBot", f"🤔 Unknown command `{cmd}`. Type `/help` to view all bot commands.")
+        # Treat unknown slash command as a smart AI query instead of an error
+        history = get_recent_room_context(conn, room, limit=6)
+        reply = await call_smart_gemini(
+            f"You are AetherBot in AetherRealm replying to @{username}. If they typed a custom slash command `{text}`, play along cleverly or help them. Under 90 words.",
+            text,
+            room_history=history,
+            fallback=f"🤔 Command `{cmd}` not recognized. Type `/help` to view all bot commands.",
+        )
+        add_bot("AetherBot", reply)
 
     return bot_replies
 
@@ -1129,7 +1214,7 @@ class ProfileUpdateReq(BaseModel):
 
 class FriendActionReq(BaseModel):
     target_username: str
-    action: str = "request"  # request | accept | decline
+    action: str = "request"
 
 
 class DmSendReq(BaseModel):
@@ -1154,7 +1239,7 @@ class ConfessionReplyReq(BaseModel):
 
 class LoungeCreateReq(BaseModel):
     name: str = Field(..., min_length=2, max_length=80)
-    topic: str = "Hangout & Music"
+    topic: str = "Hangout, Voice & Music"
     theme: str = "sakura"
     video_url_or_id: Optional[str] = "jfKfPfyJRdk"
 
@@ -1162,7 +1247,7 @@ class LoungeCreateReq(BaseModel):
 class MediaSyncReq(BaseModel):
     channel_key: str = "entertainment"
     lounge_id: Optional[int] = None
-    action: str = "sync"  # play | pause | seek | queue | skip | sync
+    action: str = "sync"
     video_url_or_id: Optional[str] = None
     title: Optional[str] = None
     position: Optional[float] = None
@@ -1252,13 +1337,12 @@ def register(req: RegisterReq):
                 (clean_user, req.email.strip() if req.email else None, pw_hash, code, req.birthday),
             )
             user = dict(cur.fetchone())
-            # Welcomer message in global chat
             cur.execute(
                 """
                 INSERT INTO chat_messages (room, sender, is_bot, bot_name, content)
                 VALUES ('global', 'Welcomer', TRUE, 'Welcomer', %s)
                 """,
-                (f"🎉 Welcome **@{clean_user}** to the realm! Say hi or type `/help` to explore bots.",),
+                (f"🎉 Welcome **@{clean_user}** to AetherRealm! Say hi, join a voice lounge, or type `/help`.",),
             )
             conn.commit()
 
@@ -1581,7 +1665,7 @@ async def send_dm(req: DmSendReq, current_user: Dict[str, Any] = Depends(get_cur
 
 
 # ---------------------------------------------------------------------------
-# Chat Rooms, Bots, Giveaways & Counting Endpoints
+# Chat Rooms, Smart Bots, Giveaways & Counting Endpoints
 # ---------------------------------------------------------------------------
 @app.get("/api/chat/{room}")
 def get_chat_history(room: str, limit: int = 80):
@@ -1598,7 +1682,12 @@ def get_chat_history(room: str, limit: int = 80):
             c_state = dict(cur.fetchone())
             cur.execute("SELECT * FROM giveaways WHERE active = TRUE ORDER BY id DESC LIMIT 5")
             g_list = [dict(r) for r in cur.fetchall()]
-            return {"messages": rows, "counting": c_state, "giveaways": g_list}
+            return {
+                "messages": rows,
+                "counting": c_state,
+                "giveaways": g_list,
+                "voice_peers": manager.voice_participants.get(room, {}),
+            }
     finally:
         release_db_connection(conn)
 
@@ -1688,6 +1777,7 @@ def list_lounges():
                 elapsed = max(0.0, t - (l.get("updated_at") or t)) if l.get("is_playing") else 0.0
                 l["computed_position"] = round((l.get("base_position") or 0.0) + elapsed, 2)
                 l["server_time"] = t
+                l["voice_count"] = len(manager.voice_participants.get(f"lounge:{l['id']}", {}))
             return {"lounges": lounges}
     finally:
         release_db_connection(conn)
@@ -1696,7 +1786,9 @@ def list_lounges():
 @app.post("/api/lounges")
 async def create_lounge(req: LoungeCreateReq, current_user: Dict[str, Any] = Depends(get_current_user)):
     uname = current_user["username"]
-    vid = extract_youtube_id(req.video_url_or_id or "") or "jfKfPfyJRdk"
+    found = await search_youtube_first(req.video_url_or_id or "jfKfPfyJRdk")
+    vid = found["video_id"] if found else "jfKfPfyJRdk"
+    title = found["title"] if found else f"Stream ({vid})"
     ts = now_ts()
     conn = get_db_connection()
     try:
@@ -1707,7 +1799,7 @@ async def create_lounge(req: LoungeCreateReq, current_user: Dict[str, Any] = Dep
                 VALUES (%s, %s, %s, %s, %s::jsonb, %s, %s, TRUE, 0.0, %s)
                 RETURNING *
                 """,
-                (req.name.strip(), req.topic.strip(), req.theme, uname, json.dumps([uname]), vid, f"Stream ({vid})", ts),
+                (req.name.strip(), req.topic.strip(), req.theme, uname, json.dumps([uname]), vid, title, ts),
             )
             lounge = dict(cur.fetchone())
             conn.commit()
@@ -1814,6 +1906,12 @@ async def sync_media(req: MediaSyncReq, current_user: Dict[str, Any] = Depends(g
     uname = current_user["username"]
     ts = now_ts()
     parsed_vid = extract_youtube_id(req.video_url_or_id or "")
+    resolved_title = req.title
+    if not parsed_vid and req.video_url_or_id:
+        found = await search_youtube_first(req.video_url_or_id)
+        if found:
+            parsed_vid = found["video_id"]
+            resolved_title = resolved_title or found["title"]
 
     conn = get_db_connection()
     try:
@@ -1829,7 +1927,7 @@ async def sync_media(req: MediaSyncReq, current_user: Dict[str, Any] = Depends(g
                 )
                 pos = req.position if req.position is not None else cur_pos
                 vid = parsed_vid or row["video_id"]
-                title = req.title or (f"YouTube Track ({vid})" if parsed_vid else row["video_title"])
+                title = resolved_title or (f"YouTube Track ({vid})" if parsed_vid else row["video_title"])
                 playing = row["is_playing"]
                 queue = list(row["queue"] or [])
 
@@ -1840,7 +1938,7 @@ async def sync_media(req: MediaSyncReq, current_user: Dict[str, Any] = Depends(g
                 elif req.action == "seek":
                     pos = max(0.0, float(req.position or 0.0))
                 elif req.action == "queue" and parsed_vid:
-                    item = {"video_id": parsed_vid, "title": req.title or f"Track ({parsed_vid})", "by": uname}
+                    item = {"video_id": parsed_vid, "title": resolved_title or f"Track ({parsed_vid})", "by": uname}
                     if not vid:
                         vid = parsed_vid
                         title = item["title"]
@@ -1883,7 +1981,6 @@ async def sync_media(req: MediaSyncReq, current_user: Dict[str, Any] = Depends(g
                 await manager.broadcast("global", payload)
                 return payload
 
-            # Entertainment / global media channel
             cur.execute("SELECT * FROM media_state WHERE channel_key = %s", (req.channel_key,))
             m = cur.fetchone()
             if not m:
@@ -1902,7 +1999,7 @@ async def sync_media(req: MediaSyncReq, current_user: Dict[str, Any] = Depends(g
             )
             pos = req.position if req.position is not None else cur_pos
             vid = parsed_vid or m["video_id"]
-            title = req.title or (f"YouTube Track ({vid})" if parsed_vid else m["title"])
+            title = resolved_title or (f"YouTube Track ({vid})" if parsed_vid else m["title"])
             playing = m["is_playing"]
             queue = list(m["queue"] or [])
 
@@ -1913,7 +2010,7 @@ async def sync_media(req: MediaSyncReq, current_user: Dict[str, Any] = Depends(g
             elif req.action == "seek":
                 pos = max(0.0, float(req.position or 0.0))
             elif req.action == "queue" and parsed_vid:
-                queue.append({"video_id": parsed_vid, "title": req.title or f"Track ({parsed_vid})", "by": uname})
+                queue.append({"video_id": parsed_vid, "title": resolved_title or f"Track ({parsed_vid})", "by": uname})
             elif req.action == "skip" and queue:
                 nxt = queue.pop(0)
                 vid = nxt["video_id"]
@@ -1945,6 +2042,7 @@ async def sync_media(req: MediaSyncReq, current_user: Dict[str, Any] = Depends(g
                 "updated_by": uname,
             }
             await manager.broadcast("global", payload)
+            await manager.broadcast("entertainment", payload)
             return payload
     finally:
         release_db_connection(conn)
@@ -1977,7 +2075,8 @@ async def youtube_search(q: str = Query(..., min_length=1)):
                         title = it.get("snippet", {}).get("title", "YouTube Video")
                         if vid:
                             items.append({"video_id": vid, "title": title})
-                    return {"items": items}
+                    if items:
+                        return {"items": items}
         except Exception:
             pass
 
@@ -1986,7 +2085,7 @@ async def youtube_search(q: str = Query(..., min_length=1)):
         {"video_id": "4xDzrJKXOOY", "title": "Synthwave Radio - Beats to Chill/Game to"},
         {"video_id": "5qap5aO4i9A", "title": "Chill Lofi Beats Mix"},
     ]
-    return {"items": curated, "note": "Paste any full YouTube URL/ID to queue any video."}
+    return {"items": curated}
 
 
 # ---------------------------------------------------------------------------
@@ -2261,7 +2360,7 @@ async def submit_score(req: ScoreSubmitReq, current_user: Dict[str, Any] = Depen
 
 
 # ---------------------------------------------------------------------------
-# Admin Endpoints (Preserving x-admin-key moderation)
+# Admin Endpoints
 # ---------------------------------------------------------------------------
 def verify_admin(x_admin_key: Optional[str] = Header(default=None)):
     if not x_admin_key or x_admin_key != ADMIN_KEY:
@@ -2295,7 +2394,7 @@ def admin_delete_confession(confession_id: int):
 
 
 # ---------------------------------------------------------------------------
-# WebSocket Endpoint (/ws/{room})
+# WebSocket Endpoint (/ws/{room}) — Chat, Sync & WebRTC Voice Signaling
 # ---------------------------------------------------------------------------
 @app.websocket("/ws/{room}")
 async def websocket_room(websocket: WebSocket, room: str, token: Optional[str] = Query(default=None)):
@@ -2305,13 +2404,14 @@ async def websocket_room(websocket: WebSocket, room: str, token: Optional[str] =
         if claims and claims.get("username"):
             user_info["username"] = claims["username"]
 
+    uname = user_info["username"]
     await manager.connect(room, websocket, user_info)
     await manager.broadcast(
         room,
         {
             "type": "presence_join",
             "room": room,
-            "user": user_info["username"],
+            "user": uname,
             "timestamp": now_utc().isoformat(),
         },
     )
@@ -2320,7 +2420,7 @@ async def websocket_room(websocket: WebSocket, room: str, token: Optional[str] =
     try:
         while True:
             raw = await websocket.receive_text()
-            manager.online_users[user_info["username"]] = now_ts()
+            manager.online_users[uname] = now_ts()
             try:
                 data = json.loads(raw)
             except Exception:
@@ -2337,8 +2437,41 @@ async def websocket_room(websocket: WebSocket, room: str, token: Optional[str] =
                     {
                         "type": "typing",
                         "room": room,
-                        "user": user_info["username"],
+                        "user": uname,
                         "is_typing": bool(data.get("is_typing", True)),
+                    },
+                )
+
+            elif msg_type == "voice_state":
+                in_voice = bool(data.get("in_voice", False))
+                muted = bool(data.get("muted", False))
+                speaking = bool(data.get("speaking", False))
+                if in_voice:
+                    manager.voice_participants[room][uname] = {"muted": muted, "speaking": speaking}
+                else:
+                    manager.voice_participants[room].pop(uname, None)
+
+                await manager.broadcast(
+                    room,
+                    {
+                        "type": "voice_state",
+                        "room": room,
+                        "user": uname,
+                        "in_voice": in_voice,
+                        "muted": muted,
+                        "speaking": speaking,
+                    },
+                )
+
+            elif msg_type == "webrtc_signal":
+                await manager.broadcast(
+                    room,
+                    {
+                        "type": "webrtc_signal",
+                        "room": room,
+                        "from": uname,
+                        "to": data.get("to"),
+                        "signal": data.get("signal"),
                     },
                 )
 
@@ -2355,10 +2488,10 @@ async def websocket_room(websocket: WebSocket, room: str, token: Optional[str] =
                             VALUES (%s, %s, FALSE, %s)
                             RETURNING *
                             """,
-                            (room, user_info["username"], content),
+                            (room, uname, content),
                         )
                         saved = dict(cur.fetchone())
-                        bot_msgs = await process_bot_command(conn, room, user_info["username"], content)
+                        bot_msgs = await process_bot_command(conn, room, uname, content)
                         conn.commit()
 
                     await manager.broadcast(room, {"type": "chat_message", "message": saved})
@@ -2368,7 +2501,6 @@ async def websocket_room(websocket: WebSocket, room: str, token: Optional[str] =
                     release_db_connection(conn)
 
             elif msg_type == "media_sync":
-                # Relay low-latency client sync ticks to peers in the same room
                 await manager.broadcast(
                     room,
                     {
@@ -2380,7 +2512,7 @@ async def websocket_room(websocket: WebSocket, room: str, token: Optional[str] =
                         "is_playing": data.get("is_playing"),
                         "base_position": data.get("base_position"),
                         "updated_at": data.get("updated_at") or now_ts(),
-                        "updated_by": user_info["username"],
+                        "updated_by": uname,
                     },
                 )
 

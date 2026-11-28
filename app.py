@@ -517,6 +517,9 @@ def init_db():
             """)
 
             migrations = [
+                "CREATE SEQUENCE IF NOT EXISTS lounges_id_seq",
+                "ALTER TABLE lounges ALTER COLUMN id SET DEFAULT nextval('lounges_id_seq')",
+                "SELECT setval('lounges_id_seq', COALESCE((SELECT MAX(id) FROM lounges), 0) + 1, false)",
                 "ALTER TABLE users ADD COLUMN IF NOT EXISTS role_title VARCHAR(64) DEFAULT 'Voyager'",
                 "ALTER TABLE users ADD COLUMN IF NOT EXISTS birthday VARCHAR(16)",
                 "ALTER TABLE users ADD COLUMN IF NOT EXISTS captcha_verified BOOLEAN DEFAULT TRUE",
@@ -573,18 +576,19 @@ def init_db():
             if cur.fetchone()[0] == 0:
                 ts = now_ts()
                 default_lounges = [
-                    ("Sakura Shrine Lounge", "Cherry blossoms, lofi & late-night talks", "sakura", "System", '["System"]', "5qap5aO4i9A", "Lofi Hip Hop Radio - Beats to Sleep/Chill to", ts),
-                    ("Neon Nightcore & Cinema", "Synchronized watchparty & synthwave", "cyberpunk", "System", '["System"]', "jfKfPfyJRdk", "Lofi Hip Hop Radio - Chill Session", ts),
-                    ("Ancient Ruins Campfire", "Cozy acoustic & guild strategy", "ruins", "System", '["System"]', "4xDzrJKXOOY", "Synthwave Radio - Beats to Chill/Game to", ts),
+                    (1, "Sakura Shrine Lounge", "Cherry blossoms, lofi & late-night talks", "sakura", "System", '["System"]', "5qap5aO4i9A", "Lofi Hip Hop Radio - Beats to Sleep/Chill to", ts),
+                    (2, "Neon Nightcore & Cinema", "Synchronized watchparty & synthwave", "cyberpunk", "System", '["System"]', "jfKfPfyJRdk", "Lofi Hip Hop Radio - Chill Session", ts),
+                    (3, "Ancient Ruins Campfire", "Cozy acoustic & guild strategy", "ruins", "System", '["System"]', "4xDzrJKXOOY", "Synthwave Radio - Beats to Chill/Game to", ts),
                 ]
-                for name, topic, theme, creator, members, vid, title, t in default_lounges:
+                for lid, name, topic, theme, creator, members, vid, title, t in default_lounges:
                     cur.execute(
                         """
-                        INSERT INTO lounges (name, topic, theme, creator, members, video_id, video_title, is_playing, base_position, updated_at)
-                        VALUES (%s, %s, %s, %s, %s::jsonb, %s, %s, TRUE, 0.0, %s)
+                        INSERT INTO lounges (id, name, topic, theme, creator, members, video_id, video_title, is_playing, base_position, updated_at)
+                        VALUES (%s, %s, %s, %s, %s, %s::jsonb, %s, %s, TRUE, 0.0, %s)
                         """,
-                        (name, topic, theme, creator, members, vid, title, t),
+                        (lid, name, topic, theme, creator, members, vid, title, t),
                     )
+                cur.execute("SELECT setval('lounges_id_seq', 4, false)")
 
             conn.commit()
     finally:

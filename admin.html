@@ -3,59 +3,129 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>C9nnect — Admin CMS &amp; Moderation</title>
-  <script src="https://cdn.tailwindcss.com/3.4.17"></script>
+  <title>AetherRealm — Admin CMS</title>
+  <style>
+    body {
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+      background: #0b0e17;
+      color: #f1f5f9;
+      margin: 0;
+      padding: 24px;
+    }
+    .wrap { max-width: 1120px; margin: 0 auto; }
+    .card {
+      background: #131829;
+      border: 1px solid rgba(139, 92, 246, 0.3);
+      border-radius: 14px;
+      padding: 18px;
+      margin-bottom: 20px;
+    }
+    .row { display: flex; gap: 10px; align-items: center; }
+    input {
+      background: #0b0e17;
+      border: 1px solid rgba(139, 92, 246, 0.35);
+      color: #fff;
+      padding: 9px 12px;
+      border-radius: 9px;
+      flex: 1;
+    }
+    button {
+      background: #8b5cf6;
+      color: #fff;
+      border: none;
+      padding: 9px 16px;
+      border-radius: 9px;
+      font-weight: 700;
+      cursor: pointer;
+    }
+    button.danger { background: #ef4444; padding: 6px 10px; font-size: 0.8rem; }
+    table { width: 100%; border-collapse: collapse; margin-top: 10px; font-size: 0.88rem; }
+    th, td { text-align: left; padding: 10px; border-bottom: 1px solid rgba(255,255,255,0.08); }
+    th { color: #94a3b8; }
+  </style>
 </head>
-<body class="bg-slate-950 text-slate-100 min-h-screen p-6">
-  <div class="max-w-5xl mx-auto space-y-6">
-    <div class="flex flex-wrap items-center justify-between gap-4 border-b border-slate-800 pb-4">
-      <div>
-        <h1 class="text-2xl font-extrabold text-amber-400">C9nnect Admin CMS</h1>
-        <p class="text-xs text-slate-400">PostgreSQL user leaderboard, live confession moderation &amp; site status.</p>
+<body>
+  <div class="wrap">
+    <div class="card">
+      <h2>🛡️ AetherRealm Admin Console</h2>
+      <div class="row">
+        <input id="admin-key" type="password" placeholder="Enter ADMIN_KEY..." />
+        <button onclick="loadAdminData()">Unlock & Load</button>
       </div>
-      <div class="flex items-center gap-2">
-        <input id="adminKey" type="password" value="admin123" placeholder="Admin Key" class="bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-xs" />
-        <button type="button" onclick="loadAll()" class="px-4 py-2 rounded-xl bg-amber-500 text-slate-950 font-bold text-xs">Refresh Data</button>
-        <a href="/" class="px-4 py-2 rounded-xl bg-slate-800 text-xs font-bold">← Back to C9nnect</a>
-      </div>
+      <p id="status-msg" style="color:#f59e0b; font-size:0.85rem; margin-top:8px;"></p>
     </div>
 
-    <div class="bg-slate-900 border border-slate-800 rounded-2xl p-5 space-y-3">
-      <h2 class="font-bold text-sm uppercase tracking-wider text-purple-400">Registered PostgreSQL Players</h2>
-      <div id="usersTable" class="space-y-2 text-xs"></div>
+    <div class="card">
+      <h3>👥 Registered Citizens</h3>
+      <table>
+        <thead>
+          <tr>
+            <th>ID</th>
+            <th>Username</th>
+            <th>Level</th>
+            <th>XP</th>
+            <th>Honor</th>
+            <th>Cowoncy</th>
+            <th>Warnings</th>
+          </tr>
+        </thead>
+        <tbody id="users-tbody"></tbody>
+      </table>
     </div>
 
-    <div class="bg-slate-900 border border-slate-800 rounded-2xl p-5 space-y-3">
-      <h2 class="font-bold text-sm uppercase tracking-wider text-rose-400">Confessions Moderation</h2>
-      <div id="confModList" class="space-y-2 text-xs"></div>
+    <div class="card">
+      <h3>📜 Void Scrolls / Confessions Moderation</h3>
+      <table>
+        <thead>
+          <tr>
+            <th>ID</th>
+            <th>Author</th>
+            <th>Content</th>
+            <th>Likes</th>
+            <th>Action</th>
+          </tr>
+        </thead>
+        <tbody id="confs-tbody"></tbody>
+      </table>
     </div>
   </div>
 
   <script>
-    function key() { return document.getElementById('adminKey').value; }
-    async function loadAll() {
-      const users = await (await fetch('/api/users')).json();
-      document.getElementById('usersTable').innerHTML = users.map(u => `
-        <div class="flex justify-between items-center bg-slate-950 p-3 rounded-xl border border-slate-800">
-          <span><strong>${u.username}</strong> • Honor: ${u.honor}</span>
-          <span class="text-amber-400 font-bold">Lv.${u.level} (${u.xp} XP)</span>
-        </div>
-      `).join('') || '<p class="text-slate-400">No users yet.</p>';
+    async function loadAdminData() {
+      const key = document.getElementById("admin-key").value.trim();
+      const status = document.getElementById("status-msg");
+      status.textContent = "";
+      try {
+        const res = await fetch("/api/admin/overview", { headers: { "x-admin-key": key } });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || "Unauthorized");
 
-      const confs = await (await fetch('/api/confessions')).json();
-      document.getElementById('confModList').innerHTML = confs.map(c => `
-        <div class="flex justify-between items-center bg-slate-950 p-3 rounded-xl border border-slate-800 gap-4">
-          <span><strong>${c.author_name}:</strong> ${c.text}</span>
-          <button type="button" onclick="delConf(${c.id})" class="px-3 py-1 rounded-lg bg-rose-600 text-white font-bold shrink-0">Delete</button>
-        </div>
-      `).join('') || '<p class="text-slate-400">No confessions yet.</p>';
+        const uBody = document.getElementById("users-tbody");
+        uBody.innerHTML = "";
+        data.users.forEach(u => {
+          const tr = document.createElement("tr");
+          tr.innerHTML = `<td>${u.id}</td><td><strong>@${u.username}</strong></td><td>${u.level}</td><td>${u.xp}</td><td>${u.honor}</td><td>${u.cowoncy}</td><td>${u.warnings || 0}</td>`;
+          uBody.appendChild(tr);
+        });
+
+        const cBody = document.getElementById("confs-tbody");
+        cBody.innerHTML = "";
+        data.confessions.forEach(c => {
+          const tr = document.createElement("tr");
+          tr.innerHTML = `<td>${c.id}</td><td>${c.author}</td><td>${c.content}</td><td>${c.likes}</td><td><button class="danger" onclick="delConf(${c.id})">Delete</button></td>`;
+          cBody.appendChild(tr);
+        });
+        status.textContent = `Loaded ${data.users.length} users and ${data.confessions.length} scrolls.`;
+      } catch (e) {
+        status.textContent = e.message;
+      }
     }
 
     async function delConf(id) {
-      const res = await fetch('/api/admin/confessions/' + id, { method: 'DELETE', headers: { 'x-admin-key': key() } });
-      if (res.ok) loadAll();
+      const key = document.getElementById("admin-key").value.trim();
+      await fetch(`/api/admin/confessions/${id}`, { method: "DELETE", headers: { "x-admin-key": key } });
+      loadAdminData();
     }
-    loadAll();
   </script>
 </body>
 </html>
